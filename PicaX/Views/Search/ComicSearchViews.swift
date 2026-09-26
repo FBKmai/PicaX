@@ -101,6 +101,7 @@ enum ComicSearchTarget: Hashable, Identifiable, Sendable {
 struct ComicSearchPage: View {
     @EnvironmentObject private var platformAccounts: PlatformAccountService
     @EnvironmentObject private var searchHistory: SearchHistoryService
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage(SearchSettingsKey.focusesSearchFieldOnOpen) private var focusesSearchFieldOnOpen = false
     @AppStorage(SearchSettingsKey.enablesSearchSuggestions) private var enablesSearchSuggestions = true
     @AppStorage(SearchSettingsKey.suggestionSelectionBehavior) private var suggestionSelectionBehavior = SearchSuggestionSelectionBehavior.fill.rawValue
@@ -198,6 +199,20 @@ struct ComicSearchPage: View {
                 }
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 4) { searchControls }
+                } else {
+                    HStack(spacing: 16) { searchControls }
+                }
+            }
+            .font(.subheadline)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.bar)
+        }
         .safeAreaInset(edge: .bottom) {
             if !viewModel.requests.isEmpty {
                 Button {
@@ -208,9 +223,15 @@ struct ComicSearchPage: View {
                         let completed = viewModel.requests.filter {
                             if case .loaded = $0.status { return true }; return false
                         }.count
-                        Text("搜索进度：\(completed)/\(viewModel.requests.count) · 查看详情")
+                        Text("搜索进度：\(completed)/\(viewModel.requests.count)")
                             .font(.footnote)
-                    }.padding(8).frame(maxWidth: .infinity)
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }.background(.bar)
             }
         }
@@ -246,37 +267,24 @@ struct ComicSearchPage: View {
             startSearch(force: true)
         }
         .toolbar {
-            ToolbarItemGroup(placement: .picaxTopBarTrailing) {
+            ToolbarItem(placement: .picaxTopBarTrailing) {
                 Menu {
-                    Button("多源版本") { showsVersions = true }
+                    Button {
+                        startSearch(force: true)
+                    } label: {
+                        Label("重新搜索", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(viewModel.trimmedKeyword(query).isEmpty || viewModel.isSearching)
+
+                    Divider()
+
                     Button("常用搜索", systemImage: "star") { showsSavedSearches = true }
+                    Button("多源版本", systemImage: "square.stack") { showsVersions = true }
                     Button("组合预览与进度", systemImage: "list.bullet.rectangle") { showsSearchProgress = true }
-                } label: { Image(systemName: "ellipsis.circle") }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
                 .accessibilityLabel("搜索工具")
-
-                Button {
-                    showsAdvancedOptions = true
-                } label: {
-                    Image(systemName: "slider.horizontal.3")
-                }
-                .foregroundStyle(isSearchOptionsCustomized ? selectedSearchTarget.accentColor : .primary)
-                .accessibilityLabel("高级选项")
-
-                ComicSearchTargetMenu(
-                    selectedTarget: selectedSearchTarget,
-                    aggregatePlatforms: aggregatePlatforms,
-                    onSelectTarget: { selectedSearchTarget = $0 },
-                    onToggleAggregatePlatform: toggleAggregatePlatform
-                )
-                .equatable()
-
-                Button {
-                    startSearch(force: true)
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .disabled(viewModel.trimmedKeyword(query).isEmpty)
-                .accessibilityLabel("刷新")
             }
         }
         .sheet(isPresented: $showsVersions) {
@@ -347,6 +355,30 @@ struct ComicSearchPage: View {
             loadMoreTask?.cancel()
             viewModel.cancelCurrentSearch()
         }
+    }
+
+    @ViewBuilder
+    private var searchControls: some View {
+        ComicSearchTargetMenu(
+            selectedTarget: selectedSearchTarget,
+            aggregatePlatforms: aggregatePlatforms,
+            onSelectTarget: { selectedSearchTarget = $0 },
+            onToggleAggregatePlatform: toggleAggregatePlatform
+        )
+        .equatable()
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        Button {
+            showsAdvancedOptions = true
+        } label: {
+            Label(isSearchOptionsCustomized ? "筛选已设置" : "筛选", systemImage: "slider.horizontal.3")
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .foregroundStyle(isSearchOptionsCustomized ? selectedSearchTarget.accentColor : .primary)
+        .accessibilityLabel("高级筛选")
+        .accessibilityValue(isSearchOptionsCustomized ? "已设置" : "默认")
     }
 
     private func search(
@@ -620,69 +652,6 @@ struct ComicSearchPage: View {
 
     private var selectedSuggestionSelectionBehavior: SearchSuggestionSelectionBehavior {
         SearchSuggestionSelectionBehavior(rawValue: suggestionSelectionBehavior) ?? .fill
-    }
-}
-
-private struct ComicSearchTargetMenu: View, Equatable {
-    let selectedTarget: ComicSearchTarget
-    let aggregatePlatforms: Set<ComicPlatform>
-    let onSelectTarget: (ComicSearchTarget) -> Void
-    let onToggleAggregatePlatform: (ComicPlatform) -> Void
-
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.selectedTarget == rhs.selectedTarget
-            && lhs.aggregatePlatforms == rhs.aggregatePlatforms
-    }
-
-    var body: some View {
-        Menu {
-            Section("聚合搜索") {
-                Button {
-                    onSelectTarget(aggregateSearchTarget)
-                } label: {
-                    if selectedTarget.isAggregate {
-                        Label(aggregateSearchTarget.title, systemImage: "checkmark")
-                    } else {
-                        Label(aggregateSearchTarget.title, systemImage: aggregateSearchTarget.systemImage)
-                    }
-                }
-
-                ForEach(ComicPlatform.onlinePlatforms) { platform in
-                    Button {
-                        onToggleAggregatePlatform(platform)
-                    } label: {
-                        Label(
-                            platform.title,
-                            systemImage: aggregatePlatforms.contains(platform) ? "checkmark.circle.fill" : "circle"
-                        )
-                    }
-                }
-            }
-
-            Divider()
-
-            Section("单平台") {
-                ForEach(ComicPlatform.onlinePlatforms) { platform in
-                    let target = ComicSearchTarget.platform(platform)
-                    Button {
-                        onSelectTarget(target)
-                    } label: {
-                        if selectedTarget == target {
-                            Label(platform.title, systemImage: "checkmark")
-                        } else {
-                            Label(platform.title, systemImage: platform.systemImage)
-                        }
-                    }
-                }
-            }
-        } label: {
-            Image(systemName: selectedTarget.systemImage)
-        }
-        .accessibilityLabel("搜索选项")
-    }
-
-    private var aggregateSearchTarget: ComicSearchTarget {
-        .aggregate(ComicPlatform.onlinePlatforms.filter { aggregatePlatforms.contains($0) })
     }
 }
 

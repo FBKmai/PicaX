@@ -266,7 +266,7 @@ nonisolated struct PlatformCredential: Codable, Equatable, Sendable {
     }
 
     func cookieStorage() -> HTTPCookieStorage {
-        let storage = HTTPCookieStorage()
+        let storage = HTTPCookieStorage.makeEphemeral()
         for cookie in cookies.compactMap(\.httpCookie) {
             storage.setCookie(cookie)
         }

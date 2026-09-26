@@ -26,6 +26,7 @@ struct ComicReaderPage: View {
     @AppStorage(ReaderSettingsKey.progressBottomInset) private var progressBottomInset = 0.0
     @AppStorage(ReaderSettingsKey.readingMode) private var readingMode = ReaderReadingMode.topToBottomContinuous.rawValue
     @AppStorage(ReaderSettingsKey.wholeBookContinuousReading) private var wholeBookContinuousReading = false
+    @AppStorage(ReaderSettingsKey.multiBookContinuousReading) private var multiBookContinuousReading = false
     @AppStorage(ReaderSettingsKey.wholeBookContinuesReadingList) private var wholeBookContinuesReadingList = false
     @AppStorage(ReaderSettingsKey.imageSpacing) private var imageSpacing = 0.0
     @AppStorage(ReaderSettingsKey.firstImageTopPadding) private var firstImageTopPadding = 115.0
@@ -69,15 +70,15 @@ struct ComicReaderPage: View {
     @AppStorage(ReaderSettingsKey.showsReadingListBookToast) private var showsReadingListBookToast = true
     @AppStorage(ReaderSettingsKey.readingListAutoAdvancesAtBoundary) private var readingListAutoAdvancesAtBoundary = true
 
-    let detail: ComicDetailInfo
+    private var detail: ComicDetailInfo { viewModel.detail }
     let initialChapterIndex: Int
     let initialPageIndex: Int
     let ignoresHistoryProgress: Bool
     let recordsReadingHistory: Bool
     let service: ComicContentService
     let localChapterImageProvider: ((ComicChapter, Int) async -> [ComicChapterImage])?
-    let localChapterCommentsProvider: ((ComicChapter, Int) async -> [ComicComment])?
-    let historyChapterIndexResolver: (Int) -> Int
+    private let initialLocalChapterCommentsProvider: ((ComicChapter, Int) async -> [ComicComment])?
+    private let initialHistoryChapterIndexResolver: (Int) -> Int
     let listContext: ComicReaderListContext?
     let initialToastMessage: String?
     let readerUIHiddenState: Binding<Bool>?
@@ -121,6 +122,7 @@ struct ComicReaderPage: View {
         localChapterImageProvider: ((ComicChapter, Int) async -> [ComicChapterImage])? = nil,
         localChapterCommentsProvider: ((ComicChapter, Int) async -> [ComicComment])? = nil,
         historyChapterIndexResolver: @escaping (Int) -> Int = { $0 },
+        initialContinuousBook: ReaderContinuousBook? = nil,
         listContext: ComicReaderListContext? = nil,
         initialToastMessage: String? = nil,
         readerUIHiddenState: Binding<Bool>? = nil,
@@ -129,15 +131,14 @@ struct ComicReaderPage: View {
         shouldHandleReaderExit: @escaping () -> Bool = { true },
         onReaderExit: (() -> Void)? = nil
     ) {
-        self.detail = detail
         self.initialChapterIndex = initialChapterIndex
         self.initialPageIndex = initialPageIndex
         self.ignoresHistoryProgress = ignoresHistoryProgress
         self.recordsReadingHistory = recordsReadingHistory
         self.service = service
         self.localChapterImageProvider = localChapterImageProvider
-        self.localChapterCommentsProvider = localChapterCommentsProvider
-        self.historyChapterIndexResolver = historyChapterIndexResolver
+        self.initialLocalChapterCommentsProvider = localChapterCommentsProvider
+        self.initialHistoryChapterIndexResolver = historyChapterIndexResolver
         self.listContext = listContext
         self.initialToastMessage = initialToastMessage
         self.readerUIHiddenState = readerUIHiddenState
@@ -150,7 +151,8 @@ struct ComicReaderPage: View {
             initialChapterIndex: initialChapterIndex,
             initialPageIndex: initialPageIndex,
             service: service,
-            localChapterImageProvider: localChapterImageProvider
+            localChapterImageProvider: localChapterImageProvider,
+            initialContinuousBook: initialContinuousBook
         ))
     }
 
@@ -255,6 +257,7 @@ struct ComicReaderPage: View {
                         autoPagingTurnsChapter: $autoPagingTurnsChapter,
                         wholeBookContinuousReading: $wholeBookContinuousReading,
                         wholeBookContinuesReadingList: $wholeBookContinuesReadingList,
+                        multiBookContinuousReading: $multiBookContinuousReading,
                         showsWholeBookReadingListContinuation: hasReadingList,
                         deletesLocalDownloadOnExit: deletesLocalDownloadOnExit?.wrappedValue,
                         onToggleAutoPaging: toggleAutoPaging,
@@ -689,20 +692,12 @@ struct ComicReaderPage: View {
             let targetPixelWidth = readerTargetPixelWidth(for: geometry.size.width)
             if readerReadingMode == .topToBottomContinuous {
                 ReaderWholeBookContinuousView(
-                    item: detail.item,
-                    chapters: detail.chapters,
+                    initialBook: continuousBook,
+                    listContext: usesMultiBookContinuousReading ? listContext : nil,
                     initialChapterIndex: viewModel.loadedChapterIndex,
                     initialPageIndex: viewModel.requestedPageIndex,
                     initialImages: images,
                     service: service,
-                    account: platformAccounts.account(for: detail.item.platform),
-                    localCommentsProvider: localChapterCommentsProvider,
-                    loadChapterImages: { chapterIndex in
-                        try await viewModel.chapterImages(
-                            index: chapterIndex,
-                            account: platformAccounts.account(for: detail.item.platform)
-                        )
-                    },
                     imageSpacing: CGFloat(imageSpacing),
                     firstImageTopPadding: CGFloat(firstImageTopPadding),
                     lastImageBottomPadding: CGFloat(lastImageBottomPadding),
@@ -714,7 +709,7 @@ struct ComicReaderPage: View {
                     displaySize: geometry.size,
                     zoomConfiguration: readerZoomConfiguration,
                     dimsImages: dimsReaderImages,
-                    showsChapterComments: shouldShowChapterCommentsAtEnd,
+                    showsChapterComments: showsChapterCommentsAtEnd,
                     uiToggleMode: readerUIToggleMode,
                     tapPagingEnabled: tapPagingEnabled,
                     tapPagingEdgePercent: boundedTapPagingEdgePercent,
@@ -726,18 +721,13 @@ struct ComicReaderPage: View {
                     autoPagingInterval: boundedAutoPageInterval,
                     autoPagingDistancePercent: boundedAutoPageDistancePercent,
                     smoothContinuousAutoPaging: smoothContinuousAutoPaging,
-                    automaticallyContinuesToNextBook: wholeBookContinuesReadingList && listContext?.canMoveNext == true,
+                    automaticallyContinuesToNextBook: !usesMultiBookContinuousReading && wholeBookContinuesReadingList && listContext?.canMoveNext == true,
                     progressJumpRequest: $progressJumpRequest,
                     onToggleUI: { toggleReaderUI() },
-                    onPositionChange: { chapterIndex, pageIndex, pageCount in
-                        updateWholeBookReadingPosition(
-                            chapterIndex: chapterIndex,
-                            pageIndex: pageIndex,
-                            pageCount: pageCount
-                        )
-                    },
+                    onPositionChange: updateContinuousReadingPosition,
                     onReachedBookEnd: { handleWholeBookEndReached() }
                 )
+                .id(usesMultiBookContinuousReading)
             } else {
                 ReaderWholeBookPagedView(
                     item: detail.item,
@@ -797,8 +787,61 @@ struct ComicReaderPage: View {
         scheduleReadingHistoryRecord(pageIndex: pageIndex, totalPages: pageCount)
     }
 
+    private var continuousBook: ReaderContinuousBook {
+        if let book = viewModel.continuousBook { return book }
+        return .make(
+            id: listContext?.currentEntryID ?? detail.item.readingHistoryID,
+            detail: detail,
+            service: service,
+            account: platformAccounts.account(for: detail.item.platform),
+            localImages: localChapterImageProvider,
+            localComments: initialLocalChapterCommentsProvider,
+            historyChapterIndex: initialHistoryChapterIndexResolver
+        )
+    }
+
+    private var localChapterCommentsProvider: ((ComicChapter, Int) async -> [ComicComment])? {
+        if let book = viewModel.continuousBook { return book.localCommentsProvider }
+        return initialLocalChapterCommentsProvider
+    }
+
+    private var historyChapterIndexResolver: (Int) -> Int {
+        viewModel.continuousBook?.historyChapterIndex ?? initialHistoryChapterIndexResolver
+    }
+
+    private func updateContinuousReadingPosition(
+        section: ReaderContinuousChapterSection,
+        pageIndex: Int,
+        completedBook: ReaderContinuousChapterSection?
+    ) {
+        let changesBook = continuousBook.id != section.book.id
+        if changesBook {
+            flushPendingHistoryRecord()
+            flushReadingDurationSession()
+            if recordsReadingHistory, let completedBook {
+                persistHistoryRecord(ReaderHistoryRecordSnapshot(
+                    item: completedBook.book.detail.item,
+                    chapterIndex: completedBook.book.historyChapterIndex(completedBook.chapterIndex),
+                    pageIndex: completedBook.images.count - 1,
+                    totalPages: completedBook.images.count,
+                    totalChapters: completedBook.book.detail.chapters.count
+                ))
+            }
+        }
+        let changed = viewModel.adoptContinuousPosition(section: section, pageIndex: pageIndex)
+        if changesBook {
+            listContext?.didReadContinuousBook(section.book, completedBook != nil)
+            if recordsReadingHistory { followUpdates.markAsRead(item: detail.item) }
+            startReadingDurationSessionIfNeeded()
+            if showsReadingListBookToast { showReaderToast(detail.item.title) }
+        }
+        if changed {
+            scheduleReadingHistoryRecord(pageIndex: pageIndex, totalPages: section.images.count)
+        }
+    }
+
     private func handleWholeBookEndReached() {
-        if wholeBookContinuesReadingList,
+        if !usesMultiBookContinuousReading, wholeBookContinuesReadingList,
            (!isAutoPaging || autoPagingTurnsChapter),
            moveReadingList(
                .next,
@@ -807,9 +850,9 @@ struct ComicReaderPage: View {
             return
         }
         if isAutoPaging {
-            stopAutoPaging(toast: "已读完全书")
+            stopAutoPaging(toast: usesMultiBookContinuousReading ? "已读完阅读列表" : "已读完全书")
         } else {
-            showReaderToast("已读完全书")
+            showReaderToast(usesMultiBookContinuousReading ? "已读完阅读列表" : "已读完全书")
         }
     }
 
@@ -2169,7 +2212,11 @@ struct ComicReaderPage: View {
     }
 
     private var usesWholeBookContinuousReading: Bool {
-        wholeBookContinuousReading && readerReadingMode != .pageCurl
+        (wholeBookContinuousReading || usesMultiBookContinuousReading) && readerReadingMode != .pageCurl
+    }
+
+    private var usesMultiBookContinuousReading: Bool {
+        multiBookContinuousReading && hasReadingList && readerReadingMode == .topToBottomContinuous
     }
 
     private var currentChapter: ComicChapter? {

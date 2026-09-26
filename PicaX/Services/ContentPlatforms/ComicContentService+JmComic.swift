@@ -173,15 +173,18 @@ extension ComicContentService {
     }
 
     func jmAuthenticatedContext(account: PlatformAccount) async throws -> (cookies: HTTPCookieStorage, loginInfo: JmLoginInfo) {
-        if !account.credential.cookies.isEmpty {
-            return (account.credential.cookieStorage(), try jmStoredLoginInfo(account: account))
+        let storedLoginInfo = try jmStoredLoginInfo(account: account)
+        let storedCookies = account.credential.cookieStorage()
+        if let url = URL(string: storedLoginInfo.baseURL),
+           storedCookies.cookies(for: url)?.contains(where: { $0.name == "AVS" && !$0.value.isEmpty }) == true {
+            return (storedCookies, storedLoginInfo)
         }
 
         guard let password = account.credential.password?.nilIfEmpty else {
             throw ComicContentError.loginRequired("JMComic 登录信息已失效，请重新登录。")
         }
 
-        let cookies = HTTPCookieStorage()
+        let cookies = HTTPCookieStorage.makeEphemeral()
         let loginInfo = try await jmLoginInfo(username: account.username, password: password, cookies: cookies)
         return (cookies, loginInfo)
     }
@@ -275,7 +278,7 @@ extension ComicContentService {
         guard let account else {
             throw ComicContentError.loginRequired("JMComic 评论需要先登录平台账号。")
         }
-        let cookies = HTTPCookieStorage()
+        let cookies = HTTPCookieStorage.makeEphemeral()
         let baseURL = try await jmLogin(account: account, cookies: cookies)
         let id = jmComicID(from: item.id)
         _ = try await jmJSON(path: "comment", method: "POST", body: "comment=\(content.urlEncoded)&status=undefined&aid=\(id.urlEncoded)", cookies: cookies, baseURL: baseURL)
@@ -338,6 +341,11 @@ extension ComicContentService {
             throw ComicContentError.invalidURL("JMComic \(path)")
         }
         var request = URLRequest(url: url)
+        // JM sessions are account-scoped; the shared URLSession must not replace AVS.
+        request.httpShouldHandleCookies = false
+        if cookies != nil {
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+        }
         request.httpMethod = method
         if let body {
             request.httpBody = Data(body.utf8)

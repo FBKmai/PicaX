@@ -31,10 +31,6 @@
 			</array>
 		</dict>
 	</array>
-
-
-	<key>NSFaceIDUsageDescription</key>
-	<string>使用 Face ID 验证身份以解锁 PicaX 并保护漫画内容。</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -51,6 +47,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>使用 Face ID 验证身份以解锁 PicaX 并保护漫画内容。</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>
@@ -110,11 +108,21 @@
 	<key>UTImportedTypeDeclarations</key>
 	<array>
 		<dict>
-			<key>UTTypeIdentifier</key><string>moye.picax.cbz</string>
-			<key>UTTypeDescription</key><string>Comic Book Archive</string>
-			<key>UTTypeConformsTo</key><array><string>public.zip-archive</string></array>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.zip-archive</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Comic Book Archive</string>
+			<key>UTTypeIdentifier</key>
+			<string>moye.picax.cbz</string>
 			<key>UTTypeTagSpecification</key>
-			<dict><key>public.filename-extension</key><array><string>cbz</string></array></dict>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>cbz</string>
+				</array>
+			</dict>
 		</dict>
 		<dict>
 			<key>UTTypeConformsTo</key>

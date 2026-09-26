@@ -46,7 +46,6 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "6D9FF2662FEEB200008AA850"
             BuildableName = "PicaX Watch App.app"
-            BlueprintName = "PicaX Watch App"
             ReferencedContainer = "container:PicaX.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -63,7 +62,6 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "6D9FF2662FEEB200008AA850"
             BuildableName = "PicaX Watch App.app"
-            BlueprintName = "PicaX Watch App"
             ReferencedContainer = "container:PicaX.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

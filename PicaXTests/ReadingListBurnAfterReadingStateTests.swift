@@ -3,6 +3,31 @@ import XCTest
 
 @MainActor
 final class ReadingListBurnAfterReadingStateTests: XCTestCase {
+    func testDisablingAutomaticallyEnabledSessionCancelsPendingRemoval() {
+        var state = ReadingListBurnAfterReadingState(isEnabled: true)
+        state.prepareRemoval(
+            entryID: "first-entry",
+            recordID: "first-record",
+            hasFinishedCurrentEntry: true,
+            isLaterDestination: true,
+            destinationEntryID: "second-entry"
+        )
+        XCTAssertTrue(state.hasPendingRemoval)
+
+        state.isEnabled = false
+
+        XCTAssertNil(state.takeRemoval(afterLoading: "second-entry"))
+        state.prepareRemoval(
+            entryID: "second-entry",
+            recordID: "second-record",
+            hasFinishedCurrentEntry: true,
+            isLaterDestination: true,
+            destinationEntryID: "third-entry"
+        )
+        XCTAssertFalse(state.isEnabled)
+        XCTAssertNil(state.takeRemoval(afterLoading: "third-entry"))
+    }
+
     func testRemovalIsAvailableOnlyAfterDestinationLoads() {
         var state = ReadingListBurnAfterReadingState()
         state.isEnabled = true

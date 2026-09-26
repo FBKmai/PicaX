@@ -207,7 +207,7 @@ struct ComicContentService: Sendable {
             }
             return account
         case .htManga:
-            let cookies = HTTPCookieStorage()
+            let cookies = HTTPCookieStorage.makeEphemeral()
             try await htMangaLogin(username: trimmedUsername, password: trimmedPassword, baseURL: htMangaBaseURL, cookies: cookies)
             let account = PlatformAccount(
                 platform: platform,
@@ -231,7 +231,7 @@ struct ComicContentService: Sendable {
         case .eHentai:
             throw ComicContentError.loginRequired("E-Hentai 账号校验需要网页登录 cookie，请通过网页登录。")
         case .jmComic:
-            let cookies = HTTPCookieStorage()
+            let cookies = HTTPCookieStorage.makeEphemeral()
             let loginInfo = try await jmLoginInfo(username: trimmedUsername, password: trimmedPassword, cookies: cookies)
             let account = PlatformAccount(
                 platform: platform,

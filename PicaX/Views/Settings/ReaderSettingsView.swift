@@ -10,6 +10,7 @@ struct ReaderSettingsView: View {
     @AppStorage(ReaderSettingsKey.progressBottomInset) private var progressBottomInset = 0.0
     @AppStorage(ReaderSettingsKey.readingMode) private var readingMode = ReaderReadingMode.topToBottomContinuous.rawValue
     @AppStorage(ReaderSettingsKey.wholeBookContinuousReading) private var wholeBookContinuousReading = false
+    @AppStorage(ReaderSettingsKey.multiBookContinuousReading) private var multiBookContinuousReading = false
     @AppStorage(ReaderSettingsKey.wholeBookContinuesReadingList) private var wholeBookContinuesReadingList = false
     @AppStorage(ReaderSettingsKey.imageSpacing) private var imageSpacing = 0.0
     @AppStorage(ReaderSettingsKey.firstImageTopPadding) private var firstImageTopPadding = 115.0
@@ -53,6 +54,8 @@ struct ReaderSettingsView: View {
     @AppStorage(ReaderSettingsKey.showsReadingListBookToast) private var showsReadingListBookToast = true
     @AppStorage(ReaderSettingsKey.showsReadingListLoadingToast) private var showsReadingListLoadingToast = true
     @AppStorage(ReaderSettingsKey.readingListAutoAdvancesAtBoundary) private var readingListAutoAdvancesAtBoundary = true
+    @AppStorage(ReaderSettingsKey.autoBurnAfterReadingSingle) private var autoBurnAfterReadingSingle = false
+    @AppStorage(ReaderSettingsKey.autoBurnAfterReadingList) private var autoBurnAfterReadingList = false
 
     var body: some View {
         List {
@@ -90,8 +93,10 @@ struct ReaderSettingsView: View {
 
                 Toggle("整卷连续阅读", isOn: $wholeBookContinuousReading)
                     .disabled(selectedReadingMode == .pageCurl)
+                Toggle("多书连续阅读", isOn: $multiBookContinuousReading)
+                    .disabled(selectedReadingMode != .topToBottomContinuous)
                 Toggle("自动连续下一本书", isOn: $wholeBookContinuesReadingList)
-                    .disabled(!wholeBookContinuousReading || selectedReadingMode == .pageCurl)
+                    .disabled(!wholeBookContinuousReading || selectedReadingMode == .pageCurl || (multiBookContinuousReading && selectedReadingMode == .topToBottomContinuous))
                 Toggle("深色模式下降低图片亮度", isOn: $reducesImageBrightnessInDarkMode)
             } header: {
                 Text("阅读")
@@ -228,6 +233,15 @@ struct ReaderSettingsView: View {
                 Text("批量阅读")
             } footer: {
                 Text("批量阅读切换书籍时会保留当前阅读器并显示加载提示，加载完成后再切换内容。此开关用于按章节阅读；整卷连续阅读使用“阅读”分区中的独立开关。关闭后，底栏上一章/下一章按钮仍可在书籍边界手动切换。")
+            }
+
+            Section {
+                Toggle("阅读单本时自动开启", isOn: $autoBurnAfterReadingSingle)
+                Toggle("阅读全部时自动开启", isOn: $autoBurnAfterReadingList)
+            } header: {
+                Text("本地阅读 · 阅后即焚")
+            } footer: {
+                Text("仅在开始新的本地阅读时自动开启，可在阅读器的“更多”菜单中关闭本次阅后即焚。\n单本：退出阅读器时删除本地文件和下载记录。\n阅读全部：读完当前书并成功进入后续书籍后，删除上一部的本地文件、下载记录和阅读列表项。收藏与阅读历史会保留。")
             }
 
             Section {
@@ -373,6 +387,8 @@ struct ReaderSettingsView: View {
         var descriptions = [selectedReadingMode.description]
         if selectedReadingMode == .pageCurl {
             descriptions.append("仿真翻页按章节阅读，不支持整卷连续阅读。")
+        } else if multiBookContinuousReading && selectedReadingMode == .topToBottomContinuous {
+            descriptions.append("从阅读列表进入时，章节与下一本书会追加到当前内容末尾，可以连续滑动并返回上一部。书籍交界处会显示书名。")
         } else if wholeBookContinuousReading {
             descriptions.append("下一章会提前追加到当前章节末尾，直到全书结束。")
             if wholeBookContinuesReadingList {

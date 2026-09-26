@@ -446,21 +446,22 @@ private extension WatchComicAPIClient {
     }
 
     func jmAuthenticatedContext(account: WatchPlatformAccount) async throws -> (cookies: HTTPCookieStorage, baseURL: String) {
-        if !account.credential.cookies.isEmpty {
-            let cookies = HTTPCookieStorage()
-            for cookie in account.credential.cookies.compactMap(\.httpCookie) {
-                cookies.setCookie(cookie)
-            }
-            return (cookies, account.credential.baseURL?.nonEmptyValue ?? jmBaseURLs.first ?? "https://18comic.vip")
+        let cookies = HTTPCookieStorage.makeEphemeral()
+        for cookie in account.credential.cookies.compactMap(\.httpCookie) {
+            cookies.setCookie(cookie)
+        }
+        let baseURL = account.credential.baseURL?.nonEmptyValue ?? jmBaseURLs.first ?? "https://18comic.vip"
+        if let url = URL(string: baseURL),
+           cookies.cookies(for: url)?.contains(where: { $0.name == "AVS" && !$0.value.isEmpty }) == true {
+            return (cookies, baseURL)
         }
 
         guard let password = account.credential.password?.nonEmptyValue else {
             throw WatchComicAPIError.loginRequired("JMComic 登录信息已失效，请在 iPhone 重新登录后同步。")
         }
 
-        let cookies = HTTPCookieStorage()
-        let baseURL = try await jmLogin(username: account.username, password: password, cookies: cookies)
-        return (cookies, baseURL)
+        let loginBaseURL = try await jmLogin(username: account.username, password: password, cookies: cookies)
+        return (cookies, loginBaseURL)
     }
 
     func jmLogin(username: String, password: String, cookies: HTTPCookieStorage) async throws -> String {
@@ -514,6 +515,7 @@ private extension WatchComicAPIClient {
             method: method,
             headers: headers,
             body: body.map { Data($0.utf8) },
+            cookies: cookies,
             methodNotAllowedMessage: "JMComic API 地址已失效（HTTP 405），请在设置的“平台账号 → JMComic → 漫画源设置”中更新 API 地址。"
         )
 
@@ -1680,14 +1682,26 @@ private extension WatchComicAPIClient {
         method: String = "GET",
         headers: [String: String] = [:],
         body: Data? = nil,
+        cookies: HTTPCookieStorage? = nil,
         methodNotAllowedMessage: String? = nil
     ) async throws -> Data {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
+        if cookies != nil {
+            request.httpShouldHandleCookies = false
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+        }
         headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         let (data, response) = try await session.data(for: request)
         if let httpResponse = response as? HTTPURLResponse {
+            if let cookies {
+                let fields = httpResponse.allHeaderFields.reduce(into: [String: String]()) { result, field in
+                    guard let name = field.key as? String else { return }
+                    result[name] = "\(field.value)"
+                }
+                cookies.setCookies(HTTPCookie.cookies(withResponseHeaderFields: fields, for: url), for: url, mainDocumentURL: url)
+            }
             if httpResponse.statusCode == 405, let methodNotAllowedMessage {
                 throw WatchComicAPIError.server(methodNotAllowedMessage)
             }

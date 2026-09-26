@@ -113,6 +113,7 @@ struct ReaderOptionsMenu: View {
     @Binding var autoPagingTurnsChapter: Bool
     @Binding var wholeBookContinuousReading: Bool
     @Binding var wholeBookContinuesReadingList: Bool
+    @Binding var multiBookContinuousReading: Bool
     let showsWholeBookReadingListContinuation: Bool
     let deletesLocalDownloadOnExit: Bool?
     let onToggleAutoPaging: () -> Void
@@ -167,7 +168,10 @@ struct ReaderOptionsMenu: View {
                 Toggle(isOn: $autoPagingTurnsChapter) {
                     Label("自动进入下一章", systemImage: "arrow.down.doc")
                 }
-                .disabled(wholeBookContinuousReading && readingMode != .pageCurl)
+                .disabled(
+                    (wholeBookContinuousReading && readingMode != .pageCurl)
+                        || (showsWholeBookReadingListContinuation && multiBookContinuousReading && readingMode == .topToBottomContinuous)
+                )
             }
 
             if let deletesLocalDownloadOnExit {
@@ -188,10 +192,15 @@ struct ReaderOptionsMenu: View {
                 .disabled(readingMode == .pageCurl)
 
                 if showsWholeBookReadingListContinuation {
+                    Toggle(isOn: $multiBookContinuousReading) {
+                        Label("多书连续阅读", systemImage: "books.vertical")
+                    }
+                    .disabled(readingMode != .topToBottomContinuous)
+
                     Toggle(isOn: $wholeBookContinuesReadingList) {
                         Label("自动连续下一本书", systemImage: "books.vertical.fill")
                     }
-                    .disabled(!wholeBookContinuousReading || readingMode == .pageCurl)
+                    .disabled(!wholeBookContinuousReading || readingMode == .pageCurl || (multiBookContinuousReading && readingMode == .topToBottomContinuous))
                 }
 
                 Button(action: onOpenDetail) {

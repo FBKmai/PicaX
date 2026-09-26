@@ -5,8 +5,16 @@ struct ReadingListBurnAfterReadingState {
         let destinationEntryID: String
     }
 
-    var isEnabled = false
+    var isEnabled: Bool {
+        didSet {
+            if !isEnabled { pendingRemoval = nil }
+        }
+    }
     private var pendingRemoval: Removal?
+
+    init(isEnabled: Bool = false) {
+        self.isEnabled = isEnabled
+    }
 
     var hasPendingRemoval: Bool {
         pendingRemoval != nil

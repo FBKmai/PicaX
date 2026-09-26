@@ -133,8 +133,9 @@ nonisolated enum AppProxyHTTPCodec {
                 throw AppProxyError.invalidHTTPResponse("响应头字段无效")
             }
             if let existing = headers[name] {
-                let separator = name == "set-cookie" ? "\n" : ", "
-                headers[name] = existing + separator + value
+                // HTTPURLResponse discards headers containing newlines. Foundation
+                // accepts combined Set-Cookie fields, including commas in Expires.
+                headers[name] = existing + ", " + value
             } else {
                 headers[name] = value
             }

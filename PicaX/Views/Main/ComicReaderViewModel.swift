@@ -10,7 +10,8 @@ final class ComicReaderViewModel: ObservableObject {
     @Published private(set) var currentChapterPageCount = 0
     @Published private(set) var loadedChapterIndex: Int
 
-    private let detail: ComicDetailInfo
+    @Published private(set) var detail: ComicDetailInfo
+    private(set) var continuousBook: ReaderContinuousBook?
     private let service: ComicContentService
     private let localChapterImageProvider: ((ComicChapter, Int) async -> [ComicChapterImage])?
     private var loadedChapterID: String?
@@ -28,9 +29,11 @@ final class ComicReaderViewModel: ObservableObject {
         initialChapterIndex: Int,
         initialPageIndex: Int,
         service: ComicContentService,
-        localChapterImageProvider: ((ComicChapter, Int) async -> [ComicChapterImage])?
+        localChapterImageProvider: ((ComicChapter, Int) async -> [ComicChapterImage])?,
+        initialContinuousBook: ReaderContinuousBook? = nil
     ) {
         self.detail = detail
+        self.continuousBook = initialContinuousBook
         self.currentChapterIndex = min(max(initialChapterIndex, 0), max(detail.chapters.count - 1, 0))
         self.loadedChapterIndex = min(max(initialChapterIndex, 0), max(detail.chapters.count - 1, 0))
         self.currentPageIndex = max(initialPageIndex, 0)
@@ -147,6 +150,8 @@ final class ComicReaderViewModel: ObservableObject {
             images = preloadedChapterImages
             preloadedChapterID = nil
             preloadedChapterImages = []
+        } else if let continuousBook {
+            images = try await continuousBook.loadImages(index)
         } else if let localChapterImageProvider {
             images = await localChapterImageProvider(chapter, index)
             guard !images.isEmpty else { throw ReaderChapterImageLoadError.chapterNotDownloaded }
@@ -155,6 +160,31 @@ final class ComicReaderViewModel: ObservableObject {
         }
         bookmarkImageURLs[index] = images.map(\.urlString)
         return images
+    }
+
+    func adoptContinuousPosition(section: ReaderContinuousChapterSection, pageIndex: Int) -> Bool {
+        let changesBook = continuousBook?.id != section.book.id
+        let changesChapter = changesBook || loadedChapterIndex != section.chapterIndex
+        if changesBook {
+            cancelAllPreloads()
+            bookmarkImageURLs.removeAll()
+            continuousBook = section.book
+            detail = section.book.detail
+        }
+        if changesChapter {
+            loadedChapterIndex = section.chapterIndex
+            loadedChapterID = section.chapter.id
+            state = .loaded(section.images)
+        }
+        if changesChapter || bookmarkImageURLs[section.chapterIndex] == nil {
+            bookmarkImageURLs[section.chapterIndex] = section.images.map(\.urlString)
+        }
+        let changesPosition = updateReadingPosition(
+            chapterIndex: section.chapterIndex,
+            pageIndex: pageIndex,
+            pageCount: section.images.count
+        )
+        return changesBook || changesChapter || changesPosition
     }
 
     func bookmarkImageURL(chapterIndex: Int, pageIndex: Int) -> String? {
@@ -232,10 +262,13 @@ final class ComicReaderViewModel: ObservableObject {
         let service = service
         let item = detail.item
         let localChapterImageProvider = localChapterImageProvider
+        let continuousBook = continuousBook
         let boundedImageCount = min(max(preloadImageCount, 0), 15)
         nextChapterPreloadTask = Task(priority: .utility) { [weak self, service, item, nextChapter, nextChapterIndex, localChapterImageProvider, account, boundedImageCount, targetPixelWidth] in
             let images: [ComicChapterImage]
-            if let localChapterImageProvider {
+            if let continuousBook {
+                images = (try? await continuousBook.loadImages(nextChapterIndex)) ?? []
+            } else if let localChapterImageProvider {
                 images = await localChapterImageProvider(nextChapter, nextChapterIndex)
             } else {
                 do {

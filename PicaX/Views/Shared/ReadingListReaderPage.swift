@@ -112,6 +112,8 @@ struct ComicReaderListContext {
     let movePrevious: () -> Void
     let moveNext: () -> Void
     let moveNextAfterFinishingCurrent: () -> Void
+    let loadContinuousBook: (ReadingListEntry) async throws -> ReaderContinuousBook
+    let didReadContinuousBook: (ReaderContinuousBook, Bool) -> Void
 }
 
 struct ReadingListReaderPage: View {
@@ -126,13 +128,15 @@ struct ReadingListReaderPage: View {
     @State private var entries: [ReadingListEntry]
     @State private var order = ReadingListOrder.ascending
     @State private var currentEntryID: String?
+    @State private var readerID = UUID()
     @State private var loadedEntry: LoadedReadingListEntry?
     @State private var isLoading = false
+    @State private var loadID = UUID()
     @State private var errorMessage: String?
     @State private var pendingBookToastTitle: String?
     @State private var hidesReaderUI = false
     @State private var isAutoPaging = false
-    @State private var burnAfterReadingState = ReadingListBurnAfterReadingState()
+    @State private var burnAfterReadingState: ReadingListBurnAfterReadingState
 
     init(request: ReadingListRequest, service: ComicContentService) {
         self.request = request
@@ -144,6 +148,10 @@ struct ReadingListReaderPage: View {
         self.sourceIndexes = sourceIndexes
         _entries = State(initialValue: request.entries)
         _currentEntryID = State(initialValue: request.entries.indices.contains(request.startIndex) ? request.entries[request.startIndex].id : nil)
+        _burnAfterReadingState = State(initialValue: ReadingListBurnAfterReadingState(
+            isEnabled: request.entries.contains { $0.downloadedRecord != nil }
+                && UserDefaults.standard.bool(forKey: ReaderSettingsKey.autoBurnAfterReadingList)
+        ))
     }
 
     var body: some View {
@@ -186,11 +194,27 @@ struct ReadingListReaderPage: View {
     }
 
     private func reader(for loadedEntry: LoadedReadingListEntry) -> some View {
+        ComicReaderPage(
+            detail: loadedEntry.detail,
+            initialChapterIndex: 0,
+            initialPageIndex: 0,
+            ignoresHistoryProgress: true,
+            service: service,
+            initialContinuousBook: continuousBook(for: loadedEntry),
+            listContext: listContext(for: loadedEntry.entryID),
+            initialToastMessage: pendingBookToastTitle,
+            readerUIHiddenState: $hidesReaderUI,
+            autoPagingState: $isAutoPaging,
+            deletesLocalDownloadOnExit: loadedEntry.entry.downloadedRecord == nil ? nil : $burnAfterReadingState.isEnabled
+        )
+        .id(readerID)
+    }
+
+    private func continuousBook(for loadedEntry: LoadedReadingListEntry) -> ReaderContinuousBook {
         let entry = loadedEntry.entry
         let imageProvider: ((ComicChapter, Int) async -> [ComicChapterImage])?
         let commentsProvider: ((ComicChapter, Int) async -> [ComicComment])?
         let historyChapterIndexResolver: (Int) -> Int
-        let deletesLocalDownloadOnExit: Binding<Bool>?
         if let record = entry.downloadedRecord {
             imageProvider = { _, chapterIndex in
                 guard let localChapterIndexes = entry.localChapterIndexes,
@@ -209,30 +233,47 @@ struct ReadingListReaderPage: View {
                       localChapterIndexes.indices.contains(chapterIndex) else { return chapterIndex }
                 return localChapterIndexes[chapterIndex]
             }
-            deletesLocalDownloadOnExit = $burnAfterReadingState.isEnabled
         } else {
             imageProvider = nil
             commentsProvider = nil
             historyChapterIndexResolver = { $0 }
-            deletesLocalDownloadOnExit = nil
         }
 
-        return ComicReaderPage(
+        return .make(
+            id: entry.id,
             detail: loadedEntry.detail,
-            initialChapterIndex: 0,
-            initialPageIndex: 0,
-            ignoresHistoryProgress: true,
             service: service,
-            localChapterImageProvider: imageProvider,
-            localChapterCommentsProvider: commentsProvider,
-            historyChapterIndexResolver: historyChapterIndexResolver,
-            listContext: listContext(for: loadedEntry.entryID),
-            initialToastMessage: pendingBookToastTitle,
-            readerUIHiddenState: $hidesReaderUI,
-            autoPagingState: $isAutoPaging,
-            deletesLocalDownloadOnExit: deletesLocalDownloadOnExit
+            account: platformAccounts.account(for: entry.item.platform),
+            localImages: imageProvider,
+            localComments: commentsProvider,
+            historyChapterIndex: historyChapterIndexResolver
         )
-        .id(loadedEntry.entryID)
+    }
+
+    private func loadContinuousBook(_ entry: ReadingListEntry) async throws -> ReaderContinuousBook {
+        let detail: ComicDetailInfo
+        if let preset = entry.presetDetail {
+            detail = preset
+        } else {
+            detail = try await service.loadDetail(item: entry.item, account: platformAccounts.account(for: entry.item.platform))
+        }
+        return continuousBook(for: LoadedReadingListEntry(entry: entry, detail: detail))
+    }
+
+    private func didReadContinuousBook(_ book: ReaderContinuousBook, finishedPreviousBook: Bool) {
+        guard !isLoading, currentEntryID != book.id,
+              let destinationIndex = entries.firstIndex(where: { $0.id == book.id }) else { return }
+        let previous = loadedEntry?.entry
+        burnAfterReadingState.prepareRemoval(
+            entryID: previous?.id ?? "",
+            recordID: previous?.downloadedRecord?.id,
+            hasFinishedCurrentEntry: finishedPreviousBook,
+            isLaterDestination: currentIndex.map { destinationIndex > $0 } ?? false,
+            destinationEntryID: book.id
+        )
+        loadedEntry = LoadedReadingListEntry(entry: entries[destinationIndex], detail: book.detail)
+        currentEntryID = book.id
+        removeCompletedDownloadIfNeeded(afterLoading: book.id)
     }
 
     private var showsLoadingToast: Bool {
@@ -261,7 +302,9 @@ struct ReadingListReaderPage: View {
             removeEntries: removeEntries,
             movePrevious: movePrevious,
             moveNext: moveNext,
-            moveNextAfterFinishingCurrent: moveNextAfterFinishingCurrent
+            moveNextAfterFinishingCurrent: moveNextAfterFinishingCurrent,
+            loadContinuousBook: loadContinuousBook,
+            didReadContinuousBook: didReadContinuousBook
         )
     }
 
@@ -283,7 +326,12 @@ struct ReadingListReaderPage: View {
         }
 
         let previousLoadedEntry = loadedEntry
+        let token = UUID()
+        loadID = token
         isLoading = true
+        defer {
+            if loadID == token { isLoading = false }
+        }
         errorMessage = nil
         do {
             let detail: ComicDetailInfo
@@ -295,9 +343,12 @@ struct ReadingListReaderPage: View {
                     account: platformAccounts.account(for: entry.item.platform)
                 )
             }
+            guard !Task.isCancelled, currentEntryID == activeEntryID else { return }
+            readerID = UUID()
             loadedEntry = LoadedReadingListEntry(entry: entry, detail: detail)
             removeCompletedDownloadIfNeeded(afterLoading: activeEntryID)
         } catch {
+            guard !Task.isCancelled, currentEntryID == activeEntryID else { return }
             burnAfterReadingState.cancelRemoval(afterFailingToLoad: activeEntryID)
             if let previousLoadedEntry {
                 currentEntryID = previousLoadedEntry.entryID
@@ -307,7 +358,6 @@ struct ReadingListReaderPage: View {
                 loadedEntry = nil
             }
         }
-        isLoading = false
     }
 
     private func selectEntry(_ entry: ReadingListEntry) {

@@ -11,15 +11,8 @@ struct ReaderWholeBookChapterSection: Identifiable {
 }
 
 struct ReaderWholeBookContinuousView: View {
-    let item: ComicListItem
-    let chapters: [ComicChapter]
-    let initialChapterIndex: Int
-    let initialPageIndex: Int
-    let initialImages: [ComicChapterImage]
+    let listContext: ComicReaderListContext?
     let service: ComicContentService
-    let account: PlatformAccount?
-    let localCommentsProvider: ((ComicChapter, Int) async -> [ComicComment])?
-    let loadChapterImages: (Int) async throws -> [ComicChapterImage]
     let imageSpacing: CGFloat
     let firstImageTopPadding: CGFloat
     let lastImageBottomPadding: CGFloat
@@ -46,31 +39,27 @@ struct ReaderWholeBookContinuousView: View {
     let automaticallyContinuesToNextBook: Bool
     @Binding var progressJumpRequest: ReaderProgressJumpRequest?
     let onToggleUI: () -> Void
-    let onPositionChange: (Int, Int, Int) -> Void
+    let onPositionChange: (ReaderContinuousChapterSection, Int, ReaderContinuousChapterSection?) -> Void
     let onReachedBookEnd: () -> Void
 
-    @State private var sections: [ReaderWholeBookChapterSection]
+    @StateObject private var sequence: ReaderContinuousSequence
     @State private var loadableImageIDs = Set<String>()
     @State private var currentVisiblePage: ReaderWholeBookPageID
-    @State private var isLoadingNextChapter = false
-    @State private var nextChapterError: String?
     @State private var appendTask: Task<Void, Never>?
     @State private var scrollBridge = ReaderContinuousScrollBridge()
     @State private var scrollTracker = ReaderContinuousScrollTracker()
     @State private var isAutoPagingTurnInFlight = false
     @State private var visiblePageIDs = Set<ReaderWholeBookPageID>()
     @State private var hasReportedBookEnd = false
+    @State private var scrollPosition = ReaderWholeBookScrollPosition()
 
     init(
-        item: ComicListItem,
-        chapters: [ComicChapter],
+        initialBook: ReaderContinuousBook,
+        listContext: ComicReaderListContext?,
         initialChapterIndex: Int,
         initialPageIndex: Int,
         initialImages: [ComicChapterImage],
         service: ComicContentService,
-        account: PlatformAccount?,
-        localCommentsProvider: ((ComicChapter, Int) async -> [ComicComment])?,
-        loadChapterImages: @escaping (Int) async throws -> [ComicChapterImage],
         imageSpacing: CGFloat,
         firstImageTopPadding: CGFloat,
         lastImageBottomPadding: CGFloat,
@@ -97,18 +86,11 @@ struct ReaderWholeBookContinuousView: View {
         automaticallyContinuesToNextBook: Bool,
         progressJumpRequest: Binding<ReaderProgressJumpRequest?>,
         onToggleUI: @escaping () -> Void,
-        onPositionChange: @escaping (Int, Int, Int) -> Void,
+        onPositionChange: @escaping (ReaderContinuousChapterSection, Int, ReaderContinuousChapterSection?) -> Void,
         onReachedBookEnd: @escaping () -> Void
     ) {
-        self.item = item
-        self.chapters = chapters
-        self.initialChapterIndex = initialChapterIndex
-        self.initialPageIndex = initialPageIndex
-        self.initialImages = initialImages
+        self.listContext = listContext
         self.service = service
-        self.account = account
-        self.localCommentsProvider = localCommentsProvider
-        self.loadChapterImages = loadChapterImages
         self.imageSpacing = imageSpacing
         self.firstImageTopPadding = firstImageTopPadding
         self.lastImageBottomPadding = lastImageBottomPadding
@@ -138,21 +120,13 @@ struct ReaderWholeBookContinuousView: View {
         self.onPositionChange = onPositionChange
         self.onReachedBookEnd = onReachedBookEnd
 
-        let boundedChapterIndex = min(max(initialChapterIndex, 0), max(chapters.count - 1, 0))
-        let chapter = chapters.indices.contains(boundedChapterIndex)
-            ? chapters[boundedChapterIndex]
-            : ComicChapter(id: "reader-empty", title: "", subtitle: nil)
+        let boundedChapterIndex = min(max(initialChapterIndex, 0), max(initialBook.detail.chapters.count - 1, 0))
         let boundedPageIndex = min(max(initialPageIndex, 0), max(initialImages.count - 1, 0))
-        _sections = State(initialValue: [
-            ReaderWholeBookChapterSection(
-                chapterIndex: boundedChapterIndex,
-                chapter: chapter,
-                images: initialImages
-            )
-        ])
+        _sequence = StateObject(wrappedValue: ReaderContinuousSequence(
+            book: initialBook, chapterIndex: boundedChapterIndex, images: initialImages
+        ))
         _currentVisiblePage = State(initialValue: ReaderWholeBookPageID(
-            chapterIndex: boundedChapterIndex,
-            pageIndex: boundedPageIndex
+            bookID: initialBook.id, chapterIndex: boundedChapterIndex, pageIndex: boundedPageIndex
         ))
     }
 
@@ -160,13 +134,10 @@ struct ReaderWholeBookContinuousView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: imageSpacing) {
-                    ForEach(Array(sections.enumerated()), id: \.element.id) { sectionOffset, section in
+                    ForEach(Array(sequence.sections.enumerated()), id: \.element.id) { sectionOffset, section in
                         Section {
                             ForEach(section.images.indices, id: \.self) { pageIndex in
-                                let pageID = ReaderWholeBookPageID(
-                                    chapterIndex: section.chapterIndex,
-                                    pageIndex: pageIndex
-                                )
+                                let pageID = section.pageID(pageIndex)
                                 ReaderImageView(
                                     image: section.images[pageIndex],
                                     retryCount: retryCount,
@@ -191,26 +162,23 @@ struct ReaderWholeBookContinuousView: View {
                                         )
                                     }
                                 }
-                                .onAppear {
-                                    requestNextChapterIfNeeded(visiblePage: pageID)
-                                }
                             }
 
-                            if showsChapterComments {
+                            if showsChapterComments && service.supportsChapterComments(platform: section.book.detail.item.platform) {
                                 ReaderChapterCommentsView(
-                                    item: item,
+                                    item: section.book.detail.item,
                                     chapter: section.chapter,
                                     chapterIndex: section.chapterIndex,
                                     service: service,
-                                    account: account,
-                                    localCommentsProvider: localCommentsProvider
+                                    account: section.book.account,
+                                    localCommentsProvider: section.book.localCommentsProvider
                                 )
-                                .id("whole-book-comments-\(section.chapterIndex)")
+                                .id("whole-book-comments-\(section.id)")
                                 .padding(.horizontal, 10)
                             }
                         } header: {
                             if sectionOffset > 0 {
-                                chapterHeader(section)
+                                chapterHeader(section, startsBook: sequence.sections[sectionOffset - 1].book.id != section.book.id)
                             }
                         }
                     }
@@ -257,11 +225,11 @@ struct ReaderWholeBookContinuousView: View {
                 let initialPage = currentVisiblePage
                 scrollTracker.reset()
                 focusLoadableImages(around: initialPage)
-                onPositionChange(
-                    initialPage.chapterIndex,
-                    initialPage.pageIndex,
-                    initialImages.count
-                )
+                configureReadingList()
+                if let section = sequence.sections.first {
+                    onPositionChange(section, initialPage.pageIndex, nil)
+                }
+                requestNextChapterIfNeeded(visiblePage: initialPage)
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 guard !Task.isCancelled, !scrollTracker.isReady else { return }
                 scrollTracker.setReady()
@@ -272,6 +240,7 @@ struct ReaderWholeBookContinuousView: View {
             .onDisappear {
                 appendTask?.cancel()
                 appendTask = nil
+                sequence.cancelLoading()
             }
             .onChange(of: progressJumpRequest) { request in
                 guard let request else { return }
@@ -280,18 +249,28 @@ struct ReaderWholeBookContinuousView: View {
                         progressJumpRequest = nil
                     }
                 }
-                guard let section = sections.first(where: { $0.chapterIndex == request.chapterIndex }),
+                guard let section = sequence.sections.first(where: {
+                    $0.book.id == currentVisiblePage.bookID && $0.chapterIndex == request.chapterIndex
+                }),
                       !section.images.isEmpty else {
                     return
                 }
                 let pageIndex = min(max(request.pageIndex, 0), section.images.count - 1)
-                let pageID = ReaderWholeBookPageID(chapterIndex: request.chapterIndex, pageIndex: pageIndex)
+                let pageID = section.pageID(pageIndex)
                 scrollTracker.setReady()
                 focusLoadableImages(around: pageID)
                 withAnimation(.easeInOut(duration: 0.22)) {
                     proxy.scrollTo(pageID, anchor: .top)
                 }
-                onPositionChange(request.chapterIndex, pageIndex, section.images.count)
+                currentVisiblePage = pageID
+                onPositionChange(section, pageIndex, nil)
+            }
+            .onChange(of: listContext?.entries.map(\.id)) { _ in
+                configureReadingList()
+                requestNextChapterIfNeeded(visiblePage: currentVisiblePage)
+            }
+            .onChange(of: sequence.sections.count) { _ in
+                focusLoadableImages(around: currentVisiblePage, visiblePageIDs: visiblePageIDs)
             }
             .onChange(of: automaticallyContinuesToNextBook) { isEnabled in
                 if isEnabled {
@@ -307,16 +286,15 @@ struct ReaderWholeBookContinuousView: View {
     }
 
     private var coordinateSpaceName: String {
-        "reader-whole-book-\(item.platform.rawValue)-\(item.id)-\(initialChapterIndex)"
+        "reader-whole-book-\(sequence.id)"
     }
 
-    private var lastSection: ReaderWholeBookChapterSection? {
-        sections.last
+    private var lastSection: ReaderContinuousChapterSection? {
+        sequence.sections.last
     }
 
     private var hasReachedBookEnd: Bool {
-        guard let lastSection else { return true }
-        return lastSection.chapterIndex >= chapters.count - 1
+        !sequence.canAppend
     }
 
     private var smoothAutoPagingPointsPerSecond: CGFloat {
@@ -331,10 +309,10 @@ struct ReaderWholeBookContinuousView: View {
     }
 
     private var flattenedPages: [(id: ReaderWholeBookPageID, image: ComicChapterImage)] {
-        sections.flatMap { section in
+        sequence.sections.flatMap { section in
             section.images.indices.map { pageIndex in
                 (
-                    id: ReaderWholeBookPageID(chapterIndex: section.chapterIndex, pageIndex: pageIndex),
+                    id: section.pageID(pageIndex),
                     image: section.images[pageIndex]
                 )
             }
@@ -342,10 +320,16 @@ struct ReaderWholeBookContinuousView: View {
     }
 
     @ViewBuilder
-    private func chapterHeader(_ section: ReaderWholeBookChapterSection) -> some View {
+    private func chapterHeader(_ section: ReaderContinuousChapterSection, startsBook: Bool) -> some View {
         VStack(spacing: 6) {
             Image(systemName: "arrow.down")
                 .font(.caption.weight(.bold))
+            if startsBook {
+                Text(section.book.detail.item.title)
+                    .font(.title3.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+            }
             Text(section.chapter.title.isEmpty ? "第 \(section.chapterIndex + 1) 章" : section.chapter.title)
                 .font(.headline)
                 .multilineTextAlignment(.center)
@@ -359,24 +343,24 @@ struct ReaderWholeBookContinuousView: View {
 
     @ViewBuilder
     private var chapterAppendFooter: some View {
-        if isLoadingNextChapter {
+        if sequence.isLoading {
             HStack(spacing: 10) {
                 ProgressView()
                     .tint(.white)
-                Text("正在加载下一章…")
+                Text(sequence.isAtBookBoundary ? "正在加载下一本…" : "正在加载下一章…")
             }
             .font(.footnote)
             .foregroundStyle(.white.opacity(0.78))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 28)
-        } else if let nextChapterError {
+        } else if let nextChapterError = sequence.errorMessage {
             VStack(spacing: 12) {
                 Text(nextChapterError)
                     .font(.footnote)
                     .foregroundStyle(.white.opacity(0.72))
                     .multilineTextAlignment(.center)
-                Button("重试加载下一章") {
-                    requestNextChapter()
+                Button(sequence.isAtBookBoundary ? "重试加载下一本" : "重试加载下一章") {
+                    requestNextChapter(retry: true)
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -384,7 +368,7 @@ struct ReaderWholeBookContinuousView: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 28)
         } else if hasReachedBookEnd {
-            Label("已读完全书", systemImage: "checkmark.circle.fill")
+            Label(listContext == nil ? "已读完全书" : "已读完阅读列表", systemImage: "checkmark.circle.fill")
                 .font(.headline)
                 .foregroundStyle(.white.opacity(0.82))
                 .frame(maxWidth: .infinity)
@@ -393,6 +377,15 @@ struct ReaderWholeBookContinuousView: View {
     }
 
     private func syncVisiblePage(_ pageFrames: [ReaderWholeBookPageID: CGRect]) {
+        scrollPosition.pageFrames = pageFrames
+        if let anchor = scrollPosition.pendingAnchor, let frame = pageFrames[anchor.page] {
+            scrollPosition.pendingAnchor = nil
+            let targetY = max(scrollTracker.scrollY + frame.minY - anchor.minY, 0)
+            if scrollBridge.scroll(toY: targetY, animated: false) {
+                scrollTracker.updateScrollY(targetY)
+            }
+            return
+        }
         guard displaySize.height.isFinite, displaySize.height > 0 else { return }
         let viewport = CGRect(x: 0, y: 0, width: .greatestFiniteMagnitude, height: displaySize.height)
         let viewportCenterY = displaySize.height / 2
@@ -408,12 +401,11 @@ struct ReaderWholeBookContinuousView: View {
             }
             return lhs.2 > rhs.2
         })?.0,
-              let section = sections.first(where: { $0.chapterIndex == visiblePage.chapterIndex }) else {
+              let section = sequence.sections.first(where: { $0.book.id == visiblePage.bookID && $0.chapterIndex == visiblePage.chapterIndex }) else {
             return
         }
 
-        if visiblePage.chapterIndex == sections.first(where: { !$0.images.isEmpty })?.chapterIndex,
-           visiblePage.pageIndex == 0,
+        if visiblePage == sequence.sections.first?.pageID(0),
            visiblePage != currentVisiblePage,
            !scrollTracker.isUserInteracting,
            !scrollTracker.wasLastUserScrollNearTop(
@@ -428,8 +420,9 @@ struct ReaderWholeBookContinuousView: View {
             focusLoadableImages(around: visiblePage, visiblePageIDs: newVisiblePageIDs)
         }
         guard visiblePage != currentVisiblePage else { return }
+        let completedBook = sequence.completedBook(movingFrom: currentVisiblePage, to: visiblePage)
         currentVisiblePage = visiblePage
-        onPositionChange(visiblePage.chapterIndex, visiblePage.pageIndex, section.images.count)
+        onPositionChange(section, visiblePage.pageIndex, completedBook)
         requestNextChapterIfNeeded(visiblePage: visiblePage)
     }
 
@@ -462,43 +455,34 @@ struct ReaderWholeBookContinuousView: View {
 
     private func requestNextChapterIfNeeded(visiblePage: ReaderWholeBookPageID) {
         guard let lastSection,
+              visiblePage.bookID == lastSection.book.id,
               visiblePage.chapterIndex == lastSection.chapterIndex,
+              sequence.errorMessage == nil,
               visiblePage.pageIndex >= max(lastSection.images.count - chapterLoadThreshold, 0) else {
             return
         }
         requestNextChapter()
     }
 
-    private func requestNextChapter() {
-        guard !isLoadingNextChapter,
-              let lastSection,
-              lastSection.chapterIndex < chapters.count - 1 else {
-            return
+    private func configureReadingList() {
+        let previousIDs = sequence.sections.map(\.id)
+        let anchorY = scrollPosition.pageFrames[currentVisiblePage]?.minY
+        sequence.configure(
+            entries: listContext?.entries ?? [],
+            loadBook: listContext?.loadContinuousBook,
+            currentBookID: currentVisiblePage.bookID
+        )
+        if previousIDs != sequence.sections.map(\.id), let anchorY {
+            scrollPosition.pendingAnchor = (currentVisiblePage, anchorY)
         }
-        let nextIndex = lastSection.chapterIndex + 1
-        isLoadingNextChapter = true
-        nextChapterError = nil
+    }
+
+    private func requestNextChapter(retry: Bool = false) {
+        guard !sequence.isLoading, sequence.canAppend,
+              retry || sequence.errorMessage == nil else { return }
         appendTask?.cancel()
         appendTask = Task { @MainActor in
-            do {
-                let images = try await loadChapterImages(nextIndex)
-                guard !Task.isCancelled else { return }
-                guard !images.isEmpty else {
-                    throw ReaderWholeBookLoadError.emptyChapter
-                }
-                sections.append(ReaderWholeBookChapterSection(
-                    chapterIndex: nextIndex,
-                    chapter: chapters[nextIndex],
-                    images: images
-                ))
-                isLoadingNextChapter = false
-                appendTask = nil
-            } catch {
-                guard !Task.isCancelled else { return }
-                isLoadingNextChapter = false
-                nextChapterError = "下一章加载失败：\(error.localizedDescription)"
-                appendTask = nil
-            }
+            await sequence.appendNext()
         }
     }
 
@@ -584,8 +568,8 @@ struct ReaderWholeBookContinuousView: View {
               smoothContinuousAutoPaging,
               !isAutoPagingTurnInFlight,
               !scrollBridge.isUserInteracting,
-              !isLoadingNextChapter,
-              nextChapterError == nil,
+              !sequence.isLoading,
+              sequence.errorMessage == nil,
               scrollTracker.hasContentMetrics,
               displaySize.height.isFinite,
               displaySize.height > 0,
@@ -610,10 +594,9 @@ struct ReaderWholeBookContinuousView: View {
     }
 }
 
-private enum ReaderWholeBookLoadError: LocalizedError {
-    case emptyChapter
-
-    var errorDescription: String? {
-        "章节没有返回可阅读图片。"
-    }
+// Geometry changes on every scroll tick; keep it outside observable view state.
+@MainActor
+private final class ReaderWholeBookScrollPosition {
+    var pageFrames: [ReaderWholeBookPageID: CGRect] = [:]
+    var pendingAnchor: (page: ReaderWholeBookPageID, minY: CGFloat)?
 }

@@ -67,6 +67,7 @@ struct ReaderVisiblePageFramesPreferenceKey: PreferenceKey {
 }
 
 nonisolated struct ReaderWholeBookPageID: Hashable, Sendable {
+    var bookID: String = ""
     let chapterIndex: Int
     let pageIndex: Int
 }

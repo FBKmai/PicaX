@@ -6,8 +6,16 @@ struct DownloadedComicReaderPage: View {
     let request: DownloadedComicReaderRequest
     let service: ComicContentService
 
-    @State private var deletesLocalDownloadOnExit = false
+    @State private var deletesLocalDownloadOnExit: Bool
     @State private var didHandleReaderExit = false
+
+    init(request: DownloadedComicReaderRequest, service: ComicContentService) {
+        self.request = request
+        self.service = service
+        _deletesLocalDownloadOnExit = State(initialValue: UserDefaults.standard.bool(
+            forKey: ReaderSettingsKey.autoBurnAfterReadingSingle
+        ))
+    }
 
     var body: some View {
         ComicReaderPage(
