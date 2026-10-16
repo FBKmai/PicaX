@@ -1927,6 +1927,8 @@ struct ComicReaderPage: View {
             return
         }
 
+        let viewportHeight = continuousScrollTracker.visibleHeight > 0
+            ? continuousScrollTracker.visibleHeight : viewportHeight
         let viewport = CGRect(x: 0, y: 0, width: .greatestFiniteMagnitude, height: viewportHeight)
         let viewportCenterY = viewportHeight / 2
         let visiblePages = pageFrames

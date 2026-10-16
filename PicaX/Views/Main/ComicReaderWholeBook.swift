@@ -387,8 +387,9 @@ struct ReaderWholeBookContinuousView: View {
             return
         }
         guard displaySize.height.isFinite, displaySize.height > 0 else { return }
-        let viewport = CGRect(x: 0, y: 0, width: .greatestFiniteMagnitude, height: displaySize.height)
-        let viewportCenterY = displaySize.height / 2
+        let viewportHeight = scrollTracker.visibleHeight > 0 ? scrollTracker.visibleHeight : displaySize.height
+        let viewport = CGRect(x: 0, y: 0, width: .greatestFiniteMagnitude, height: viewportHeight)
+        let viewportCenterY = viewportHeight / 2
         let visiblePages = pageFrames.compactMap { id, frame -> (ReaderWholeBookPageID, CGFloat, CGFloat)? in
             guard frame.minY.isFinite, frame.maxY.isFinite else { return nil }
             let visibleHeight = frame.intersection(viewport).height

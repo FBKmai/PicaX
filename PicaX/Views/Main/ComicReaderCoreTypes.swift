@@ -335,7 +335,7 @@ final class ReaderContinuousScrollTracker {
     }
 
     func maxScrollY(fallbackViewportHeight: CGFloat) -> CGFloat {
-        max(contentHeight - max(visibleHeight, fallbackViewportHeight, 1), 0)
+        max(contentHeight - max(visibleHeight > 0 ? visibleHeight : fallbackViewportHeight, 1), 0)
     }
 
     private func aspectRatio(for index: Int, image: ComicChapterImage) -> Double {
