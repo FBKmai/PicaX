@@ -101,7 +101,6 @@ enum ComicSearchTarget: Hashable, Identifiable, Sendable {
 struct ComicSearchPage: View {
     @EnvironmentObject private var platformAccounts: PlatformAccountService
     @EnvironmentObject private var searchHistory: SearchHistoryService
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage(SearchSettingsKey.focusesSearchFieldOnOpen) private var focusesSearchFieldOnOpen = false
     @AppStorage(SearchSettingsKey.enablesSearchSuggestions) private var enablesSearchSuggestions = true
     @AppStorage(SearchSettingsKey.suggestionSelectionBehavior) private var suggestionSelectionBehavior = SearchSuggestionSelectionBehavior.fill.rawValue
@@ -158,20 +157,26 @@ struct ComicSearchPage: View {
         Group {
             switch viewModel.state {
             case .idle:
-                if searchHistory.isEnabled, !searchHistory.records.isEmpty {
-                    SearchHistoryListView(
-                        records: searchHistory.records,
-                        onSelect: selectHistory,
-                        onDelete: searchHistory.remove
-                    )
-                } else {
-                    ContentUnavailableView("搜索漫画", systemImage: "magnifyingglass", description: Text("输入关键词、作者或标签开始搜索"))
-                }
+                ComicSearchStartView(
+                    records: searchHistory.records,
+                    onSelect: selectHistory,
+                    onDelete: searchHistory.remove,
+                    onShowSavedSearches: { showsSavedSearches = true }
+                )
             case .loading:
                 LoadingComicListView(accentColor: selectedSearchTarget.accentColor)
             case .loaded(let comics):
                 if comics.isEmpty {
-                    ContentUnavailableView("暂无结果", systemImage: "magnifyingglass", description: Text("换个关键词或平台试试"))
+                    ContentUnavailableView {
+                        Label("没有找到相关漫画", systemImage: "magnifyingglass")
+                    } description: {
+                        Text("试试更短的关键词，或调整搜索范围与筛选条件。")
+                    } actions: {
+                        Button("调整筛选") {
+                            showsAdvancedOptions = true
+                        }
+                        .buttonStyle(.bordered)
+                    }
                 } else {
                     ComicListSection(
                         comics: comics,
@@ -197,42 +202,6 @@ struct ComicSearchPage: View {
                     }
                     .buttonStyle(.borderedProminent)
                 }
-            }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            Group {
-                if dynamicTypeSize.isAccessibilitySize {
-                    VStack(alignment: .leading, spacing: 4) { searchControls }
-                } else {
-                    HStack(spacing: 16) { searchControls }
-                }
-            }
-            .font(.subheadline)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.bar)
-        }
-        .safeAreaInset(edge: .bottom) {
-            if !viewModel.requests.isEmpty {
-                Button {
-                    showsSearchProgress = true
-                } label: {
-                    HStack {
-                        if viewModel.isSearching || viewModel.isLoadingMore { ProgressView() }
-                        let completed = viewModel.requests.filter {
-                            if case .loaded = $0.status { return true }; return false
-                        }.count
-                        Text("搜索进度：\(completed)/\(viewModel.requests.count)")
-                            .font(.footnote)
-                        Spacer(minLength: 8)
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .padding(.horizontal, 16)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-                }.background(.bar)
             }
         }
         .navigationTitle("搜索")
@@ -267,8 +236,34 @@ struct ComicSearchPage: View {
             startSearch(force: true)
         }
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                ComicSearchTargetMenu(
+                    selectedTarget: selectedSearchTarget,
+                    aggregatePlatforms: aggregatePlatforms,
+                    onSelectTarget: { selectedSearchTarget = $0 },
+                    onToggleAggregatePlatform: toggleAggregatePlatform
+                )
+                .equatable()
+            }
+            ToolbarItem(placement: .picaxTopBarTrailing) {
+                Button {
+                    showsAdvancedOptions = true
+                } label: {
+                    Label(
+                        "筛选",
+                        systemImage: isSearchOptionsCustomized
+                            ? "line.3.horizontal.decrease.circle.fill"
+                            : "line.3.horizontal.decrease.circle"
+                    )
+                }
+                .accessibilityLabel("高级筛选")
+                .accessibilityValue(isSearchOptionsCustomized ? "已设置" : "默认")
+            }
             ToolbarItem(placement: .picaxTopBarTrailing) {
                 Menu {
+                    if case .loaded(let comics) = viewModel.state {
+                        Text("已获取 \(comics.count) 项结果")
+                    }
                     Button {
                         startSearch(force: true)
                     } label: {
@@ -281,8 +276,17 @@ struct ComicSearchPage: View {
                     Button("常用搜索", systemImage: "star") { showsSavedSearches = true }
                     Button("多源版本", systemImage: "square.stack") { showsVersions = true }
                     Button("组合预览与进度", systemImage: "list.bullet.rectangle") { showsSearchProgress = true }
+                    NavigationLink {
+                        SearchSettingsView()
+                    } label: {
+                        Label("搜索设置", systemImage: "gearshape")
+                    }
                 } label: {
-                    Image(systemName: "ellipsis.circle")
+                    if viewModel.isSearching || viewModel.isLoadingMore {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "ellipsis.circle")
+                    }
                 }
                 .accessibilityLabel("搜索工具")
             }
@@ -355,30 +359,6 @@ struct ComicSearchPage: View {
             loadMoreTask?.cancel()
             viewModel.cancelCurrentSearch()
         }
-    }
-
-    @ViewBuilder
-    private var searchControls: some View {
-        ComicSearchTargetMenu(
-            selectedTarget: selectedSearchTarget,
-            aggregatePlatforms: aggregatePlatforms,
-            onSelectTarget: { selectedSearchTarget = $0 },
-            onToggleAggregatePlatform: toggleAggregatePlatform
-        )
-        .equatable()
-        .frame(maxWidth: .infinity, alignment: .leading)
-
-        Button {
-            showsAdvancedOptions = true
-        } label: {
-            Label(isSearchOptionsCustomized ? "筛选已设置" : "筛选", systemImage: "slider.horizontal.3")
-                .fixedSize(horizontal: true, vertical: false)
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-        }
-        .foregroundStyle(isSearchOptionsCustomized ? selectedSearchTarget.accentColor : .primary)
-        .accessibilityLabel("高级筛选")
-        .accessibilityValue(isSearchOptionsCustomized ? "已设置" : "默认")
     }
 
     private func search(
@@ -715,62 +695,6 @@ private extension String {
     private var suggestionComparableFragment: String {
         guard let separatorIndex = lastIndex(of: ":") else { return self }
         return String(self[index(after: separatorIndex)...])
-    }
-}
-
-private struct SearchHistoryListView: View {
-    let records: [SearchHistoryRecord]
-    let onSelect: (SearchHistoryRecord) -> Void
-    let onDelete: (SearchHistoryRecord) -> Void
-
-    var body: some View {
-        List {
-            Section("搜索历史") {
-                ForEach(records) { record in
-                    Button {
-                        onSelect(record)
-                    } label: {
-                        SearchHistoryRow(record: record)
-                    }
-                    .buttonStyle(.plain)
-                    .swipeActions(edge: .trailing) {
-                        Button(role: .destructive) {
-                            onDelete(record)
-                        } label: {
-                            Label("删除", systemImage: "trash")
-                        }
-                    }
-                }
-            }
-        }
-        .picaxInsetGroupedListStyle()
-    }
-}
-
-private struct SearchHistoryRow: View {
-    let record: SearchHistoryRecord
-
-    var body: some View {
-        Label {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(record.keyword)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-
-                Text("\(record.subtitle) · \(record.searchedAtText)")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        } icon: {
-            Image(systemName: record.target.systemImage)
-                .font(.title3)
-                .foregroundStyle(.secondary)
-                .frame(width: 34, height: 34)
-                .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-        .padding(.vertical, 4)
     }
 }
 

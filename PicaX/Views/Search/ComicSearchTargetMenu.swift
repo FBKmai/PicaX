@@ -54,9 +54,13 @@ struct ComicSearchTargetMenu: View, Equatable {
             }
         } label: {
             HStack(spacing: 8) {
-                Label(selectedTarget.title, systemImage: selectedTarget.systemImage)
+                Text(selectedTarget.title)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.caption.weight(.semibold))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
             .frame(minHeight: 44, alignment: .leading)
             .contentShape(Rectangle())
