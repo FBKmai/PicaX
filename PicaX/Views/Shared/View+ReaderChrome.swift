@@ -6,9 +6,9 @@ extension View {
         #if os(iOS)
         if #available(iOS 16.0, *) {
             self
-                .toolbarBackground(hidesNavigationBar ? .hidden : .visible, for: .navigationBar)
-                .toolbarColorScheme(.dark, for: .navigationBar)
-                .toolbar(hidesNavigationBar ? .hidden : .visible, for: .navigationBar)
+                .toolbarBackground(hidesNavigationBar ? .hidden : .visible, for: .navigationBar, .bottomBar)
+                .toolbarColorScheme(.dark, for: .navigationBar, .bottomBar)
+                .toolbar(hidesNavigationBar ? .hidden : .visible, for: .navigationBar, .bottomBar)
                 .statusBarHidden(hidesStatusBar)
                 .persistentSystemOverlays(hidesStatusBar ? .automatic : .visible)
         } else {

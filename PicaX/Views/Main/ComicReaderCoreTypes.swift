@@ -111,6 +111,14 @@ final class ReaderContinuousScrollBridge {
         #endif
     }
 
+    var currentScrollY: CGFloat? {
+        #if os(iOS)
+        scrollView?.contentOffset.y
+        #else
+        nil
+        #endif
+    }
+
     func scroll(toY y: CGFloat, animated: Bool) -> Bool {
         #if os(iOS)
         guard let scrollView else {

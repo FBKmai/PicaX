@@ -90,9 +90,22 @@ final class ReaderContinuousZoomUIView: UIView, UIScrollViewDelegate, UIGestureR
         guard bounds.width > 0, bounds.height > 0 else { return }
         // The hosting view fills the viewport; reading progress does not change its size.
         guard lastBoundsSize != bounds.size else { return }
+        let previousSize = lastBoundsSize
+        let normalizedCenterX = previousSize.width > 0
+            ? (scrollView.contentOffset.x + previousSize.width * 0.5)
+                / (previousSize.width * scrollView.zoomScale)
+            : 0.5
         lastBoundsSize = bounds.size
         scrollView.frame = bounds
-        resetZoom(animated: false)
+        if previousSize == .zero {
+            resetZoom(animated: false)
+        } else {
+            layoutHostedViewForCurrentZoomScale(adjustsReadingOffset: false)
+            scrollView.contentOffset = clampedContentOffset(CGPoint(
+                x: normalizedCenterX * scrollView.contentSize.width - bounds.width * 0.5,
+                y: 0
+            ))
+        }
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
@@ -190,13 +203,13 @@ final class ReaderContinuousZoomUIView: UIView, UIScrollViewDelegate, UIGestureR
         updateInteractionState()
     }
 
-    private func layoutHostedViewForCurrentZoomScale() {
+    private func layoutHostedViewForCurrentZoomScale(adjustsReadingOffset: Bool = true) {
         guard bounds.width > 0, bounds.height > 0 else { return }
 
         let readingScrollView = findReadingScrollView(in: hostingController.view)
         let scale = scrollView.zoomScale
         let oldOffset = scrollView.contentOffset
-        let readingOffset = readingScrollView?.contentOffset
+        let readingOffset = adjustsReadingOffset ? readingScrollView?.contentOffset : nil
 
         // Keep the scaled reading viewport exactly as tall as the screen. The
         // inner scroll view owns vertical scrolling; this scroll view owns zoom

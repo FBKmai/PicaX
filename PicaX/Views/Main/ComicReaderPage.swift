@@ -93,6 +93,7 @@ struct ComicReaderPage: View {
     @State private var pagedPageIndex = 0
     @State private var continuousScrollBridge = ReaderContinuousScrollBridge()
     @State private var continuousScrollTracker = ReaderContinuousScrollTracker()
+    @State private var continuousViewportPosition = ReaderViewportScrollPosition<Int>()
     @State private var continuousLoadableImageIDs = Set<String>()
     @State private var pagedScrollRestoreToken = UUID()
     @State private var isRestoringPagedScrollPosition = false
@@ -231,18 +232,10 @@ struct ComicReaderPage: View {
     private var readerToolbarContent: some View {
         readerDecoratedContent
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    ReaderChapterMenu(
-                        chapters: detail.chapters,
-                        selectedIndex: viewModel.currentChapterIndex,
-                        navigationTitle: viewModel.navigationTitle,
-                        onSelect: requestChapterLoad
-                    )
-                }
-
                 ToolbarItem(placement: .picaxTopBarTrailing) {
-                    Button { showsPageBookmarks = true } label: { Image(systemName: "bookmark") }
-                        .accessibilityLabel("页级书签")
+                    Button { showsPageBookmarks = true } label: {
+                        Label("页级书签", systemImage: "bookmark")
+                    }
                 }
 
                 ToolbarItem(placement: .picaxTopBarTrailing) {
@@ -270,14 +263,32 @@ struct ComicReaderPage: View {
                         in: navigationTransitionNamespace
                     )
                 }
+
+                if showsReaderUI {
+                    ReaderControlsToolbar(
+                        isAutoPaging: isAutoPaging,
+                        showsReadingList: hasReadingList,
+                        canMovePreviousBook: canMoveToPreviousBook,
+                        canLoadPreviousChapter: viewModel.canLoadPreviousChapter,
+                        canLoadNextChapter: viewModel.canLoadNextChapter,
+                        canMoveNextBook: canMoveToNextBook,
+                        onToggleAutoPaging: toggleAutoPaging,
+                        onShowChapters: showChapterPicker,
+                        onShowReadingList: showReadingListPicker,
+                        onMovePreviousBook: moveToPreviousBook,
+                        onLoadPreviousChapter: requestPreviousChapter,
+                        onLoadNextChapter: requestNextChapter,
+                        onMoveNextBook: moveToNextBook
+                    )
+                }
             }
     }
 
     private var readerDecoratedContent: some View {
         readerStateContent
-        .background(Color.black)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.ignoresSafeArea())
         .picaxSensitiveImageContent(containsChapterImages)
-        .ignoresSafeArea(.container)
         .navigationTitle(viewModel.navigationTitle)
         .picaxNavigationBarTitleDisplayModeInline()
         .picaxHidesTabBar()
@@ -294,13 +305,6 @@ struct ComicReaderPage: View {
         .overlay {
             ReaderChromeOverlayLayer(
                 configuration: chromeOverlayConfiguration,
-                onToggleAutoPaging: toggleAutoPaging,
-                onShowChapters: showChapterPicker,
-                onShowReadingList: showReadingListPicker,
-                onMovePreviousBook: moveToPreviousBook,
-                onLoadPreviousChapter: requestPreviousChapter,
-                onLoadNextChapter: requestNextChapter,
-                onMoveNextBook: moveToNextBook,
                 onChapterEndAction: performChapterEndAction
             )
         }
@@ -558,13 +562,6 @@ struct ComicReaderPage: View {
 
     private var chromeOverlayConfiguration: ReaderChromeOverlayConfiguration {
         ReaderChromeOverlayConfiguration(
-            showsReaderUI: showsReaderUI,
-            isAutoPaging: isAutoPaging,
-            showsReadingListButton: hasReadingList,
-            canMovePreviousBook: canMoveToPreviousBook,
-            canLoadPreviousChapter: viewModel.canLoadPreviousChapter,
-            canLoadNextChapter: viewModel.canLoadNextChapter,
-            canMoveNextBook: canMoveToNextBook,
             toastMessage: readerToastMessage,
             chapterEndAction: chapterEndAction,
             isChapterEndActionLoading: isChapterEndActionInFlight,
@@ -981,19 +978,30 @@ struct ComicReaderPage: View {
                     syncContinuousVisiblePage(
                         pageFrames: pageFrames,
                         viewportHeight: geometry.size.height,
+                        viewportWidth: geometry.size.width,
                         images: images,
-                        targetPixelWidth: targetPixelWidth
+                        targetPixelWidth: targetPixelWidth,
+                        proxy: proxy
+                    )
+                }
+                .onChange(of: geometry.size.width) { width in
+                    continuousScrollBridge.cancelPendingScrollAdjustment()
+                    continuousViewportPosition.updateViewportWidth(
+                        width,
+                        isUserInteracting: continuousScrollBridge.isUserInteracting
                     )
                 }
                 .task(id: viewModel.currentChapterIndex) {
                     resetContinuousImageState()
                     continuousScrollTracker.reset()
+                    continuousViewportPosition.reset()
                     scrollContinuous(toY: 0, animated: false)
                     focusContinuousLoadableImage(viewModel.currentPageIndex, images: images)
                     updateReadingPage(viewModel.currentPageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth, force: true)
                     await scrollToInitialPage(proxy: proxy)
                 }
                 .onChange(of: progressJumpRequest) { request in
+                    continuousViewportPosition.cancelRestoration()
                     handleProgressJumpRequest(
                         request,
                         images: images,
@@ -1009,6 +1017,9 @@ struct ComicReaderPage: View {
                     resetID: continuousZoomResetID,
                     allowsInteraction: allowsContinuousZoom(images: images)
                 )
+                .onDisappear {
+                    continuousViewportPosition.reset()
+                }
             }
         }
         .ignoresSafeArea(.container)
@@ -1429,6 +1440,7 @@ struct ComicReaderPage: View {
     }
 
     private func scrollContinuous(toY y: CGFloat, animated: Bool) {
+        continuousViewportPosition.cancelRestoration()
         let targetY = max(y, 0)
         if continuousScrollBridge.scroll(toY: targetY, animated: animated) {
             continuousScrollTracker.updateScrollY(targetY)
@@ -1592,6 +1604,7 @@ struct ComicReaderPage: View {
     ) {
         guard isAutoPaging,
               !smoothContinuousAutoPaging,
+              !continuousViewportPosition.isRestoring,
               !isAutoPagingTurnInFlight,
               !isChapterSheetPresented else {
             return
@@ -1635,6 +1648,7 @@ struct ComicReaderPage: View {
               !images.isEmpty,
               isAutoPaging,
               smoothContinuousAutoPaging,
+              !continuousViewportPosition.isRestoring,
               !isAutoPagingTurnInFlight,
               !isChapterSheetPresented,
               !continuousScrollBridge.isUserInteracting,
@@ -1917,8 +1931,10 @@ struct ComicReaderPage: View {
     private func syncContinuousVisiblePage(
         pageFrames: [Int: CGRect],
         viewportHeight: CGFloat,
+        viewportWidth: CGFloat,
         images: [ComicChapterImage],
-        targetPixelWidth: Int?
+        targetPixelWidth: Int?,
+        proxy: ScrollViewProxy
     ) {
         guard readerReadingMode == .topToBottomContinuous,
               viewportHeight.isFinite,
@@ -1926,6 +1942,29 @@ struct ComicReaderPage: View {
               !images.isEmpty else {
             return
         }
+
+        #if os(iOS)
+        if let adjustment = continuousViewportPosition.updateFrames(
+            pageFrames,
+            viewportWidth: viewportWidth,
+            scrollY: continuousScrollTracker.scrollY,
+            isUserInteracting: continuousScrollBridge.isUserInteracting
+        ) {
+            switch adjustment {
+            case .revealPage(let index):
+                proxy.scrollTo(readerPageID(index), anchor: .top)
+            case .scrollTo(let offset):
+                if continuousScrollBridge.scroll(toY: offset, animated: false) {
+                    let actualOffset = continuousScrollBridge.currentScrollY ?? offset
+                    continuousScrollTracker.updateScrollY(actualOffset)
+                    if abs(actualOffset - offset) > 0.5 {
+                        continuousViewportPosition.cancelRestoration()
+                    }
+                }
+            }
+        }
+        guard !continuousViewportPosition.isRestoring else { return }
+        #endif
 
         let viewportHeight = continuousScrollTracker.visibleHeight > 0
             ? continuousScrollTracker.visibleHeight : viewportHeight
@@ -2035,6 +2074,7 @@ struct ComicReaderPage: View {
     private func restoreContinuousScrollPosition(_ snapshot: ReaderContinuousScrollSnapshot) {
         guard readerReadingMode == .topToBottomContinuous,
               snapshot.chapterIndex == viewModel.currentChapterIndex,
+              !continuousViewportPosition.isRestoring,
               !continuousScrollBridge.isUserInteracting else {
             return
         }
@@ -2135,9 +2175,7 @@ struct ComicReaderPage: View {
     }
 
     private var chapterEndButtonVerticalPadding: CGFloat {
-        let edgeInset = CGFloat(min(max(chapterEndButtonVerticalInset, 0), 120))
-        guard showsReaderUI else { return edgeInset }
-        return edgeInset + (readerChapterEndButtonPosition.isBottom ? 60 : 40)
+        CGFloat(min(max(chapterEndButtonVerticalInset, 0), 120))
     }
 
     private var boundedPreloadImageCount: Int {
@@ -2390,20 +2428,14 @@ struct ComicReaderPage: View {
         hidesReaderUI
     }
 
-    private var readerBottomChromeClearance: CGFloat {
-        guard showsReaderUI else { return 0 }
-        return ReaderPlatformSafeArea.bottomInset + ReaderChromeMetrics.bottomOverlayClearance
-    }
-
     private var progressBottomPadding: CGFloat {
-        let bottomChromeClearance = readerBottomChromeClearance
-        let padding = max(CGFloat(progressBottomInset), 0) + bottomChromeClearance
+        let padding = max(CGFloat(progressBottomInset), 0)
         guard showsSystemStatus else { return padding }
         switch (readerProgressPosition, readerSystemStatusPosition) {
         case (.leading, .bottomLeading), (.trailing, .bottomTrailing):
             return max(
                 padding,
-                max(CGFloat(systemStatusBottomInset), 0) + bottomChromeClearance + readerSystemStatus.bottomClearance
+                max(CGFloat(systemStatusBottomInset), 0) + readerSystemStatus.bottomClearance
             )
         default:
             return padding
@@ -2414,15 +2446,9 @@ struct ComicReaderPage: View {
         var insets = readerSystemStatusPosition.edgeInsets
         switch readerSystemStatusPosition {
         case .topLeading, .topTrailing:
-            insets.top = 64
-        case .bottomLeading, .bottomTrailing:
-            break
-        }
-        switch readerSystemStatusPosition {
-        case .topLeading, .topTrailing:
             break
         case .bottomLeading, .bottomTrailing:
-            insets.bottom = max(CGFloat(systemStatusBottomInset), 0) + readerBottomChromeClearance
+            insets.bottom = max(CGFloat(systemStatusBottomInset), 0)
         }
         return insets
     }

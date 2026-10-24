@@ -52,6 +52,7 @@ struct ReaderWholeBookContinuousView: View {
     @State private var visiblePageIDs = Set<ReaderWholeBookPageID>()
     @State private var hasReportedBookEnd = false
     @State private var scrollPosition = ReaderWholeBookScrollPosition()
+    @State private var viewportPosition = ReaderViewportScrollPosition<ReaderWholeBookPageID>()
 
     init(
         initialBook: ReaderContinuousBook,
@@ -219,11 +220,18 @@ struct ReaderWholeBookContinuousView: View {
                 handleSmoothAutoPageStep(distance: distance)
             }
             .onPreferenceChange(ReaderWholeBookVisiblePageFramesPreferenceKey.self) { pageFrames in
-                syncVisiblePage(pageFrames)
+                syncVisiblePage(pageFrames, proxy: proxy)
+            }
+            .onChange(of: displaySize.width) { width in
+                viewportPosition.updateViewportWidth(
+                    width,
+                    isUserInteracting: scrollBridge.isUserInteracting
+                )
             }
             .task {
                 let initialPage = currentVisiblePage
                 scrollTracker.reset()
+                viewportPosition.reset()
                 focusLoadableImages(around: initialPage)
                 configureReadingList()
                 if let section = sequence.sections.first {
@@ -238,12 +246,14 @@ struct ReaderWholeBookContinuousView: View {
                 proxy.scrollTo(initialPage, anchor: .top)
             }
             .onDisappear {
+                viewportPosition.reset()
                 appendTask?.cancel()
                 appendTask = nil
                 sequence.cancelLoading()
             }
             .onChange(of: progressJumpRequest) { request in
                 guard let request else { return }
+                viewportPosition.cancelRestoration()
                 defer {
                     if progressJumpRequest?.id == request.id {
                         progressJumpRequest = nil
@@ -376,7 +386,29 @@ struct ReaderWholeBookContinuousView: View {
         }
     }
 
-    private func syncVisiblePage(_ pageFrames: [ReaderWholeBookPageID: CGRect]) {
+    private func syncVisiblePage(_ pageFrames: [ReaderWholeBookPageID: CGRect], proxy: ScrollViewProxy) {
+        #if os(iOS)
+        if let adjustment = viewportPosition.updateFrames(
+            pageFrames,
+            viewportWidth: displaySize.width,
+            scrollY: scrollTracker.scrollY,
+            isUserInteracting: scrollBridge.isUserInteracting
+        ) {
+            switch adjustment {
+            case .revealPage(let page):
+                proxy.scrollTo(page, anchor: .top)
+            case .scrollTo(let offset):
+                if scrollBridge.scroll(toY: offset, animated: false) {
+                    let actualOffset = scrollBridge.currentScrollY ?? offset
+                    scrollTracker.updateScrollY(actualOffset)
+                    if abs(actualOffset - offset) > 0.5 {
+                        viewportPosition.cancelRestoration()
+                    }
+                }
+            }
+        }
+        guard !viewportPosition.isRestoring else { return }
+        #else
         scrollPosition.pageFrames = pageFrames
         if let anchor = scrollPosition.pendingAnchor, let frame = pageFrames[anchor.page] {
             scrollPosition.pendingAnchor = nil
@@ -386,6 +418,7 @@ struct ReaderWholeBookContinuousView: View {
             }
             return
         }
+        #endif
         guard displaySize.height.isFinite, displaySize.height > 0 else { return }
         let viewportHeight = scrollTracker.visibleHeight > 0 ? scrollTracker.visibleHeight : displaySize.height
         let viewport = CGRect(x: 0, y: 0, width: .greatestFiniteMagnitude, height: viewportHeight)
@@ -467,14 +500,19 @@ struct ReaderWholeBookContinuousView: View {
 
     private func configureReadingList() {
         let previousIDs = sequence.sections.map(\.id)
-        let anchorY = scrollPosition.pageFrames[currentVisiblePage]?.minY
         sequence.configure(
             entries: listContext?.entries ?? [],
             loadBook: listContext?.loadContinuousBook,
             currentBookID: currentVisiblePage.bookID
         )
-        if previousIDs != sequence.sections.map(\.id), let anchorY {
-            scrollPosition.pendingAnchor = (currentVisiblePage, anchorY)
+        if previousIDs != sequence.sections.map(\.id) {
+            #if os(iOS)
+            viewportPosition.preservePosition(of: currentVisiblePage)
+            #else
+            if let anchorY = scrollPosition.pageFrames[currentVisiblePage]?.minY {
+                scrollPosition.pendingAnchor = (currentVisiblePage, anchorY)
+            }
+            #endif
         }
     }
 
@@ -489,6 +527,7 @@ struct ReaderWholeBookContinuousView: View {
 
     private func handleTapPage(_ direction: ReaderPageTurnDirection) {
         guard displaySize.height.isFinite, displaySize.height > 0 else { return }
+        viewportPosition.cancelRestoration()
         let currentY = scrollTracker.effectiveScrollY(fallback: nil)
         let maxY = scrollTracker.maxScrollY(fallbackViewportHeight: displaySize.height)
         let distance = max(displaySize.height * CGFloat(tapPagingDistancePercent) / 100, 1)
@@ -537,6 +576,7 @@ struct ReaderWholeBookContinuousView: View {
     private func handleAutoPageTick() {
         guard isAutoPaging,
               !isAutoPagingSuspended,
+              !viewportPosition.isRestoring,
               !smoothContinuousAutoPaging,
               !isAutoPagingTurnInFlight,
               displaySize.height.isFinite, displaySize.height > 0 else {
@@ -567,6 +607,7 @@ struct ReaderWholeBookContinuousView: View {
         guard isAutoPaging,
               !isAutoPagingSuspended,
               smoothContinuousAutoPaging,
+              !viewportPosition.isRestoring,
               !isAutoPagingTurnInFlight,
               !scrollBridge.isUserInteracting,
               !sequence.isLoading,

@@ -326,8 +326,21 @@ final class ReaderPhotoZoomView: UIView, UIScrollViewDelegate, UIGestureRecogniz
     override func layoutSubviews() {
         super.layoutSubviews()
         guard bounds.width > 0, bounds.height > 0 else { return }
+        var focalPoint: CGPoint?
+        if scrollView.bounds.size != bounds.size,
+           scrollView.zoomScale > scrollView.minimumZoomScale + 0.01,
+           imageView.bounds.width > 0, imageView.bounds.height > 0 {
+            let center = scrollView.convert(
+                CGPoint(x: scrollView.bounds.midX, y: scrollView.bounds.midY),
+                to: imageView
+            )
+            focalPoint = CGPoint(
+                x: center.x / imageView.bounds.width,
+                y: center.y / imageView.bounds.height
+            )
+        }
         scrollView.frame = bounds
-        layoutImageView(resetZoomIfNeeded: scrollView.zoomScale <= scrollView.minimumZoomScale + 0.01)
+        layoutImageView(focalPoint: focalPoint)
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
@@ -409,7 +422,7 @@ final class ReaderPhotoZoomView: UIView, UIScrollViewDelegate, UIGestureRecogniz
         updatePanState()
     }
 
-    private func layoutImageView(resetZoomIfNeeded: Bool) {
+    private func layoutImageView(focalPoint: CGPoint?) {
         guard let image = imageView.image, image.size.width > 0, image.size.height > 0 else {
             imageView.frame = bounds
             scrollView.contentSize = bounds.size
@@ -418,12 +431,22 @@ final class ReaderPhotoZoomView: UIView, UIScrollViewDelegate, UIGestureRecogniz
 
         let scale = min(bounds.width / image.size.width, bounds.height / image.size.height)
         let fittedSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        if resetZoomIfNeeded {
-            scrollView.zoomScale = scrollView.minimumZoomScale
-            imageView.bounds = CGRect(origin: .zero, size: fittedSize)
-            scrollView.contentSize = fittedSize
-        }
+        imageView.bounds = CGRect(origin: .zero, size: fittedSize)
+        scrollView.contentSize = CGSize(
+            width: fittedSize.width * scrollView.zoomScale,
+            height: fittedSize.height * scrollView.zoomScale
+        )
         centerImageView()
+        if let focalPoint {
+            let center = imageView.convert(
+                CGPoint(x: focalPoint.x * fittedSize.width, y: focalPoint.y * fittedSize.height),
+                to: scrollView
+            )
+            scrollView.contentOffset = CGPoint(
+                x: min(max(center.x - bounds.width * 0.5, 0), max(scrollView.contentSize.width - bounds.width, 0)),
+                y: min(max(center.y - bounds.height * 0.5, 0), max(scrollView.contentSize.height - bounds.height, 0))
+            )
+        }
     }
 
     private func centerImageView() {

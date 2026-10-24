@@ -63,45 +63,6 @@ struct ReaderLoadFailureContent: View {
     }
 }
 
-struct ReaderChapterMenu: View {
-    let chapters: [ComicChapter]
-    let selectedIndex: Int
-    let navigationTitle: String
-    let onSelect: (Int) -> Void
-
-    var body: some View {
-        Menu {
-            ForEach(Array(chapters.enumerated()), id: \.element.id) { index, chapter in
-                Button {
-                    onSelect(index)
-                } label: {
-                    if index == selectedIndex {
-                        Label(title(for: chapter, at: index), systemImage: "checkmark")
-                    } else {
-                        Text(title(for: chapter, at: index))
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Text(navigationTitle)
-                    .font(.headline.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-
-                Image(systemName: "chevron.down")
-                    .font(.caption.weight(.bold))
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("章节")
-    }
-
-    private func title(for chapter: ComicChapter, at index: Int) -> String {
-        chapter.title.isEmpty ? "第 \(index + 1) 章" : chapter.title
-    }
-}
-
 struct ReaderOptionsMenu: View {
     let isAutoPaging: Bool
     @Binding var autoPagingInterval: Double
@@ -212,20 +173,12 @@ struct ReaderOptionsMenu: View {
                 }
             }
         } label: {
-            Image(systemName: "ellipsis")
+            Label("阅读选项", systemImage: "slider.horizontal.3")
         }
-        .accessibilityLabel("更多")
     }
 }
 
 struct ReaderChromeOverlayConfiguration {
-    let showsReaderUI: Bool
-    let isAutoPaging: Bool
-    let showsReadingListButton: Bool
-    let canMovePreviousBook: Bool
-    let canLoadPreviousChapter: Bool
-    let canLoadNextChapter: Bool
-    let canMoveNextBook: Bool
     let toastMessage: String?
     let chapterEndAction: ReaderChapterEndAction?
     let isChapterEndActionLoading: Bool
@@ -236,38 +189,14 @@ struct ReaderChromeOverlayConfiguration {
 
 struct ReaderChromeOverlayLayer: View {
     let configuration: ReaderChromeOverlayConfiguration
-    let onToggleAutoPaging: () -> Void
-    let onShowChapters: () -> Void
-    let onShowReadingList: () -> Void
-    let onMovePreviousBook: () -> Void
-    let onLoadPreviousChapter: () -> Void
-    let onLoadNextChapter: () -> Void
-    let onMoveNextBook: () -> Void
     let onChapterEndAction: (ReaderChapterEndAction) -> Void
 
     var body: some View {
         ZStack {
-            ReaderBottomChromeOverlay(
-                isVisible: configuration.showsReaderUI,
-                isAutoPaging: configuration.isAutoPaging,
-                showsReadingListButton: configuration.showsReadingListButton,
-                canMovePreviousBook: configuration.canMovePreviousBook,
-                canLoadPreviousChapter: configuration.canLoadPreviousChapter,
-                canLoadNextChapter: configuration.canLoadNextChapter,
-                canMoveNextBook: configuration.canMoveNextBook,
-                onToggleAutoPaging: onToggleAutoPaging,
-                onShowChapters: onShowChapters,
-                onShowReadingList: onShowReadingList,
-                onMovePreviousBook: onMovePreviousBook,
-                onLoadPreviousChapter: onLoadPreviousChapter,
-                onLoadNextChapter: onLoadNextChapter,
-                onMoveNextBook: onMoveNextBook
-            )
-
             if let toastMessage = configuration.toastMessage {
                 ReaderToastView(message: toastMessage)
                     .padding(.horizontal, 24)
-                    .padding(.bottom, 86)
+                    .padding(.bottom, 24)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .allowsHitTesting(false)

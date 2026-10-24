@@ -72,18 +72,16 @@ struct MainTabView: View {
                                 ComicSearchPage()
                                     .picaxHidesTabBar()
                             } label: {
-                                Image(systemName: "magnifyingglass")
+                                Label("搜索", systemImage: "magnifyingglass")
                             }
-                            .accessibilityLabel("搜索")
                         }
 
                         NavigationLink {
                             SettingsPage()
                                 .picaxHidesTabBar()
                         } label: {
-                            Image(systemName: "gearshape")
+                            Label("设置", systemImage: "gearshape")
                         }
-                        .accessibilityLabel("设置")
                     }
                 }
         }
