@@ -1,6 +1,7 @@
 import SwiftUI
 
-struct ReaderControlsToolbar: ToolbarContent {
+struct ReaderControlsToolbar: ViewModifier {
+    let isVisible: Bool
     let isAutoPaging: Bool
     let showsReadingList: Bool
     let canMovePreviousBook: Bool
@@ -15,35 +16,47 @@ struct ReaderControlsToolbar: ToolbarContent {
     let onLoadNextChapter: () -> Void
     let onMoveNextBook: () -> Void
 
-    var body: some ToolbarContent {
-        readingControls
-        #if os(iOS)
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        // Toolbar visibility priorities require the SDK bundled with Xcode 27.
+        #if os(iOS) && compiler(>=6.4)
         if #available(iOS 27.0, *) {
-            chapterControls.visibilityPriority(.high)
+            content.toolbar {
+                readingControls
+                chapterControls.visibilityPriority(.high)
+            }
         } else {
-            chapterControls
+            content.toolbar {
+                readingControls
+                chapterControls
+            }
         }
         #else
-        chapterControls
+        content.toolbar {
+            readingControls
+            chapterControls
+        }
         #endif
     }
 
     private var readingControls: some ToolbarContent {
         ToolbarItemGroup(placement: controlsPlacement) {
-            Button(action: onToggleAutoPaging) {
-                Label(
-                    isAutoPaging ? "停止自动翻页" : "自动翻页",
-                    systemImage: isAutoPaging ? "timer.circle.fill" : "timer"
-                )
-            }
+            if isVisible {
+                Button(action: onToggleAutoPaging) {
+                    Label(
+                        isAutoPaging ? "停止自动翻页" : "自动翻页",
+                        systemImage: isAutoPaging ? "timer.circle.fill" : "timer"
+                    )
+                }
 
-            Button(action: onShowChapters) {
-                Label("章节", systemImage: "list.bullet")
-            }
+                Button(action: onShowChapters) {
+                    Label("章节", systemImage: "list.bullet")
+                }
 
-            if showsReadingList {
-                Button(action: onShowReadingList) {
-                    Label("阅读列表", systemImage: "list.bullet.rectangle")
+                if showsReadingList {
+                    Button(action: onShowReadingList) {
+                        Label("阅读列表", systemImage: "list.bullet.rectangle")
+                    }
                 }
             }
         }
@@ -51,28 +64,30 @@ struct ReaderControlsToolbar: ToolbarContent {
 
     private var chapterControls: some ToolbarContent {
         ToolbarItemGroup(placement: controlsPlacement) {
-            if showsReadingList {
-                Button(action: onMovePreviousBook) {
-                    Label("上一本", systemImage: "backward.end")
+            if isVisible {
+                if showsReadingList {
+                    Button(action: onMovePreviousBook) {
+                        Label("上一本", systemImage: "backward.end")
+                    }
+                    .disabled(!canMovePreviousBook)
                 }
-                .disabled(!canMovePreviousBook)
-            }
 
-            Button(action: onLoadPreviousChapter) {
-                Label("上一章", systemImage: "chevron.up")
-            }
-            .disabled(!canLoadPreviousChapter)
-
-            Button(action: onLoadNextChapter) {
-                Label("下一章", systemImage: "chevron.down")
-            }
-            .disabled(!canLoadNextChapter)
-
-            if showsReadingList {
-                Button(action: onMoveNextBook) {
-                    Label("下一本", systemImage: "forward.end")
+                Button(action: onLoadPreviousChapter) {
+                    Label("上一章", systemImage: "chevron.up")
                 }
-                .disabled(!canMoveNextBook)
+                .disabled(!canLoadPreviousChapter)
+
+                Button(action: onLoadNextChapter) {
+                    Label("下一章", systemImage: "chevron.down")
+                }
+                .disabled(!canLoadNextChapter)
+
+                if showsReadingList {
+                    Button(action: onMoveNextBook) {
+                        Label("下一本", systemImage: "forward.end")
+                    }
+                    .disabled(!canMoveNextBook)
+                }
             }
         }
     }

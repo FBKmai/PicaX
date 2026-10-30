@@ -263,25 +263,23 @@ struct ComicReaderPage: View {
                         in: navigationTransitionNamespace
                     )
                 }
-
-                if showsReaderUI {
-                    ReaderControlsToolbar(
-                        isAutoPaging: isAutoPaging,
-                        showsReadingList: hasReadingList,
-                        canMovePreviousBook: canMoveToPreviousBook,
-                        canLoadPreviousChapter: viewModel.canLoadPreviousChapter,
-                        canLoadNextChapter: viewModel.canLoadNextChapter,
-                        canMoveNextBook: canMoveToNextBook,
-                        onToggleAutoPaging: toggleAutoPaging,
-                        onShowChapters: showChapterPicker,
-                        onShowReadingList: showReadingListPicker,
-                        onMovePreviousBook: moveToPreviousBook,
-                        onLoadPreviousChapter: requestPreviousChapter,
-                        onLoadNextChapter: requestNextChapter,
-                        onMoveNextBook: moveToNextBook
-                    )
-                }
             }
+            .modifier(ReaderControlsToolbar(
+                isVisible: showsReaderUI,
+                isAutoPaging: isAutoPaging,
+                showsReadingList: hasReadingList,
+                canMovePreviousBook: canMoveToPreviousBook,
+                canLoadPreviousChapter: viewModel.canLoadPreviousChapter,
+                canLoadNextChapter: viewModel.canLoadNextChapter,
+                canMoveNextBook: canMoveToNextBook,
+                onToggleAutoPaging: toggleAutoPaging,
+                onShowChapters: showChapterPicker,
+                onShowReadingList: showReadingListPicker,
+                onMovePreviousBook: moveToPreviousBook,
+                onLoadPreviousChapter: requestPreviousChapter,
+                onLoadNextChapter: requestNextChapter,
+                onMoveNextBook: moveToNextBook
+            ))
     }
 
     private var readerDecoratedContent: some View {
