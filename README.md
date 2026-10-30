@@ -6,6 +6,7 @@
 
 PicaX 是一个使用 SwiftUI 构建的多漫画源阅读客户端，面向 iOS、watchOS、macOS 和 visionOS。项目以原生 Apple 平台体验为目标，把漫画源登录、浏览、搜索、收藏、阅读、下载、阅读统计、备份迁移和本地数据管理集中在一个应用里。
 
+[![Android Version](https://img.shields.io/badge/Android-安卓版本-26Aaa1?style=for-the-badge&logo=android&logoColor=white)](https://github.com/youshen2/PicaX-Android)
 [![Telegram Group](https://img.shields.io/badge/Telegram-加入群组-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/pica_x)
 
 ## 下载
