@@ -1,4 +1,4 @@
-import Foundation
+import CoreGraphics
 
 nonisolated struct ReaderPagedViewport {
     private(set) var size: CGSize = .zero

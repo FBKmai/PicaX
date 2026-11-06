@@ -231,7 +231,7 @@ struct ReaderWholeBookPagedView: View {
             }
             .modifier(ReaderScrollTargetLayoutModifier())
         }
-        scroll.modifier(ReaderPagingScrollModifier())
+        scroll.modifier(ReaderPagingScrollModifier(isScrollEnabled: !isRestoringScrollPosition))
     }
 
     @ViewBuilder
@@ -242,7 +242,7 @@ struct ReaderWholeBookPagedView: View {
             }
             .modifier(ReaderScrollTargetLayoutModifier())
         }
-        scroll.modifier(ReaderPagingScrollModifier())
+        scroll.modifier(ReaderPagingScrollModifier(isScrollEnabled: !isRestoringScrollPosition))
     }
 
     @ViewBuilder

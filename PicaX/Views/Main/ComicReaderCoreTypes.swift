@@ -15,11 +15,17 @@ struct ReaderScrollTargetLayoutModifier: ViewModifier {
 }
 
 struct ReaderPagingScrollModifier: ViewModifier {
+    var isScrollEnabled = true
+
     func body(content: Content) -> some View {
         if #available(iOS 17.0, *) {
-            content.scrollTargetBehavior(.paging)
-        } else {
             content
+                .scrollTargetBehavior(.paging)
+                .scrollDisabled(!isScrollEnabled)
+        } else if #available(iOS 16.0, *) {
+            content.scrollDisabled(!isScrollEnabled)
+        } else {
+            content.allowsHitTesting(isScrollEnabled)
         }
     }
 }

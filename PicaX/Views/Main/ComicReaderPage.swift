@@ -1259,7 +1259,7 @@ struct ComicReaderPage: View {
         }
 
         scroll
-            .modifier(ReaderPagingScrollModifier())
+            .modifier(ReaderPagingScrollModifier(isScrollEnabled: !isRestoringPagedScrollPosition))
             .readerScrollOffsetObserver(axis: .horizontal) { oldValue, newValue in
                 syncPagedScrollOffset(
                     oldValue: oldValue,
@@ -1393,7 +1393,7 @@ struct ComicReaderPage: View {
         }
 
         scroll
-            .modifier(ReaderPagingScrollModifier())
+            .modifier(ReaderPagingScrollModifier(isScrollEnabled: !isRestoringPagedScrollPosition))
             .readerScrollOffsetObserver(axis: .vertical) { oldValue, newValue in
                 syncPagedScrollOffset(
                     oldValue: oldValue,
@@ -1462,6 +1462,8 @@ struct ComicReaderPage: View {
     }
 
     private func setPagedPageIndex(_ pageIndex: Int, animated: Bool) {
+        pagedScrollRestoreToken = UUID()
+        isRestoringPagedScrollPosition = false
         if animated {
             withAnimation(readerPageTurnAnimation) {
                 pagedPageIndex = pageIndex
