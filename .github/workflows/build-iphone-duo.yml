@@ -1,0 +1,95 @@
+name: Build iPhone Duo unsigned IPA
+
+on:
+  push:
+    branches:
+      - iphone-duo-ios27
+  workflow_dispatch:
+    inputs:
+      xcode_version:
+        description: Xcode version (27.1 stable or 27.2 RC)
+        type: choice
+        default: "27.1"
+        options:
+          - "27.1"
+          - "27.2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iphone-duo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and build unsigned iPhone IPA
+    runs-on: xcode-27
+    timeout-minutes: 90
+    env:
+      XCODE_VERSION: ${{ inputs.xcode_version || '27.1' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select Xcode and verify iPhone Duo SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          XCODE_PATH="/Applications/Xcode_${XCODE_VERSION}.app"
+          if [[ ! -d "$XCODE_PATH" ]]; then
+            echo "::error::Requested Xcode ${XCODE_VERSION} is not installed on this runner."
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          xcodebuild -version
+          swiftc --version
+          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+          python - "$SDK_VERSION" <<'PY'
+          import sys
+          version = tuple(int(part) for part in sys.argv[1].split('.'))
+          if version < (27, 1):
+              raise SystemExit('iPhone Duo full-screen support requires iOS SDK 27.1 or newer.')
+          PY
+          xcodebuild -showsdks
+          xcrun simctl list devices available
+          {
+            echo "## iPhone Duo unsigned build"
+            echo "- Xcode: ${XCODE_VERSION}"
+            echo "- iPhoneOS SDK: ${SDK_VERSION}"
+            echo "- Target device OS: iOS 27.2 (deployment minimum unchanged)"
+            echo "- Tests: iPhone Duo / iOS 27.1 simulator"
+            echo "- Signing: disabled; sign the IPA yourself before installation"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run iPhone Duo tests and package unsigned IPA
+        shell: bash
+        run: bash BuildScripts/build-iphone-unsigned.sh
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: PicaX-iPhoneDuo-unsigned-${{ github.run_number }}
+          path: |
+            build/iPhoneDuo/PicaX-iPhoneDuo-unsigned.ipa
+            build/iPhoneDuo/ReleaseNotes.json
+            build/iPhoneDuo/ReleaseNotes.md
+            build/iPhoneDuo/PicaXBuildEnvironment.plist
+            build/iPhoneDuo/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build logs and simulator test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: PicaX-iPhoneDuo-diagnostics-${{ github.run_number }}
+          path: |
+            build/iPhoneDuo/*.log
+            build/iPhoneDuo/Tests.xcresult
+          if-no-files-found: ignore
+          retention-days: 7

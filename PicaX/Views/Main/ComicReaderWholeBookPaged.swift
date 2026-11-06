@@ -59,6 +59,9 @@ struct ReaderWholeBookPagedView: View {
     @State private var appendTask: Task<Void, Never>?
     @State private var pendingForwardTurn = false
     @State private var isAutoPagingTurnInFlight = false
+    @State private var viewport = ReaderPagedViewport()
+    @State private var scrollRestoreToken = UUID()
+    @State private var isRestoringScrollPosition = false
 
     init(
         item: ComicListItem,
@@ -172,15 +175,21 @@ struct ReaderWholeBookPagedView: View {
                 chapterLoadOverlay
             }
             .onAppear {
+                viewport.updateSize(displaySize)
                 focusLoadableImages(aroundItemID: selectedItemID)
                 reportPosition(forItemID: selectedItemID)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                    proxy.scrollTo(selectedItemID, anchor: pageAnchor)
-                }
+                restoreScrollPosition(proxy: proxy)
+            }
+            .onChange(of: displaySize) { size in
+                guard viewport.updateSize(size) else { return }
+                restoreScrollPosition(proxy: proxy)
             }
             .onDisappear {
                 appendTask?.cancel()
                 appendTask = nil
+                scrollRestoreToken = UUID()
+                isRestoringScrollPosition = false
+                viewport = ReaderPagedViewport()
             }
             .onChange(of: sections.count) { _ in
                 guard pendingForwardTurn else { return }
@@ -268,6 +277,7 @@ struct ReaderWholeBookPagedView: View {
                 .frame(width: displaySize.width, height: displaySize.height)
                 .id(item.id)
                 .onAppear {
+                    guard viewport.matches(displaySize), !isRestoringScrollPosition else { return }
                     selectedItemID = item.id
                 }
             }
@@ -297,8 +307,29 @@ struct ReaderWholeBookPagedView: View {
         }
     }
 
+    private func restoreScrollPosition(proxy: ScrollViewProxy) {
+        let token = UUID()
+        let itemID = selectedItemID
+        scrollRestoreToken = token
+        isRestoringScrollPosition = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            guard scrollRestoreToken == token else { return }
+            if selectedItemID == itemID {
+                proxy.scrollTo(itemID, anchor: pageAnchor)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                guard scrollRestoreToken == token else { return }
+                isRestoringScrollPosition = false
+                if let item = pagedItems.first(where: { $0.id == selectedItemID }) {
+                    select(item)
+                }
+            }
+        }
+    }
+
     private func select(_ item: ReaderWholeBookPagedItem) {
-        guard case .page(let section, let pageIndex) = item else { return }
+        guard viewport.matches(displaySize), !isRestoringScrollPosition,
+              case .page(let section, let pageIndex) = item else { return }
         selectedItemID = item.id
         focusLoadableImages(aroundItemID: item.id)
         onPositionChange(section.chapterIndex, pageIndex, section.images.count)
@@ -347,6 +378,8 @@ struct ReaderWholeBookPagedView: View {
         }
 
         let target = items[targetIndex]
+        scrollRestoreToken = UUID()
+        isRestoringScrollPosition = false
         selectedItemID = target.id
         focusLoadableImages(aroundItemID: target.id)
         if animated {
@@ -362,7 +395,7 @@ struct ReaderWholeBookPagedView: View {
     }
 
     private func handleAutoPageTick(proxy: ScrollViewProxy) {
-        guard isAutoPaging, !isAutoPagingTurnInFlight else { return }
+        guard isAutoPaging, !isAutoPagingTurnInFlight, !isRestoringScrollPosition else { return }
         isAutoPagingTurnInFlight = true
         turnPage(.next, proxy: proxy, animated: true)
         Task { @MainActor in
@@ -418,6 +451,8 @@ struct ReaderWholeBookPagedView: View {
         }
         let pageIndex = min(max(request.pageIndex, 0), section.images.count - 1)
         let target = ReaderWholeBookPagedItem.page(section: section, pageIndex: pageIndex)
+        scrollRestoreToken = UUID()
+        isRestoringScrollPosition = false
         selectedItemID = target.id
         focusLoadableImages(aroundItemID: target.id)
         withAnimation(.easeInOut(duration: 0.22)) {

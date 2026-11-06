@@ -96,6 +96,7 @@ struct ComicReaderPage: View {
     @State private var continuousViewportPosition = ReaderViewportScrollPosition<Int>()
     @State private var continuousLoadableImageIDs = Set<String>()
     @State private var pagedScrollRestoreToken = UUID()
+    @State private var pagedViewport = ReaderPagedViewport()
     @State private var isRestoringPagedScrollPosition = false
     @State private var locallyAutoPaging = false
     @State private var isAutoPagingTurnInFlight = false
@@ -349,6 +350,9 @@ struct ComicReaderPage: View {
     }
 
     private func handleReaderDisappear() {
+        pagedScrollRestoreToken = UUID()
+        isRestoringPagedScrollPosition = false
+        pagedViewport = ReaderPagedViewport()
         viewModel.cancelAllPreloads()
         flushPendingHistoryRecord()
         flushReadingDurationSession()
@@ -1176,8 +1180,13 @@ struct ComicReaderPage: View {
                         }
                     }
                     .onAppear {
+                        pagedViewport.updateSize(geometry.size)
                         let pageIndex = syncPagedSelection(images: images, targetPixelWidth: targetPixelWidth)
                         scrollToHorizontalPagedSelection(pageIndex, proxy: proxy)
+                    }
+                    .onChange(of: geometry.size) { size in
+                        guard pagedViewport.updateSize(size) else { return }
+                        scrollToHorizontalPagedSelection(pagedPageIndex, proxy: proxy)
                     }
                     .onChange(of: viewModel.currentChapterIndex) { _ in
                         let pageIndex = syncPagedSelection(images: images, targetPixelWidth: targetPixelWidth)
@@ -1220,7 +1229,7 @@ struct ComicReaderPage: View {
                     .frame(width: size.width, height: size.height)
                     .id(readerPageID(index))
                     .onAppear {
-                        guard !isRestoringPagedScrollPosition else { return }
+                        guard pagedViewport.matches(size), !isRestoringPagedScrollPosition else { return }
                         if pagedPageIndex != index {
                             pagedPageIndex = index
                         }
@@ -1239,7 +1248,7 @@ struct ComicReaderPage: View {
                     .frame(width: size.width, height: size.height)
                     .id(readerCommentsPageID())
                     .onAppear {
-                        guard !isRestoringPagedScrollPosition else { return }
+                        guard pagedViewport.matches(size), !isRestoringPagedScrollPosition else { return }
                         if pagedPageIndex != images.count {
                             pagedPageIndex = images.count
                         }
@@ -1256,6 +1265,7 @@ struct ComicReaderPage: View {
                     oldValue: oldValue,
                     newValue: newValue,
                     pageExtent: size.width,
+                    viewportSize: size,
                     images: images,
                     targetPixelWidth: targetPixelWidth
                 )
@@ -1303,8 +1313,13 @@ struct ComicReaderPage: View {
                         }
                     }
                     .onAppear {
+                        pagedViewport.updateSize(geometry.size)
                         let pageIndex = syncPagedSelection(images: images, targetPixelWidth: targetPixelWidth)
                         scrollToPagedSelection(pageIndex, proxy: proxy)
+                    }
+                    .onChange(of: geometry.size) { size in
+                        guard pagedViewport.updateSize(size) else { return }
+                        scrollToPagedSelection(pagedPageIndex, proxy: proxy)
                     }
                     .onChange(of: viewModel.currentChapterIndex) { _ in
                         let pageIndex = syncPagedSelection(images: images, targetPixelWidth: targetPixelWidth)
@@ -1348,7 +1363,7 @@ struct ComicReaderPage: View {
                         .frame(width: size.width, height: size.height)
                         .id(readerPageID(index))
                         .onAppear {
-                            guard !isRestoringPagedScrollPosition else { return }
+                            guard pagedViewport.matches(size), !isRestoringPagedScrollPosition else { return }
                             if pagedPageIndex != index {
                                 pagedPageIndex = index
                             }
@@ -1367,7 +1382,7 @@ struct ComicReaderPage: View {
                     .frame(width: size.width, height: size.height)
                     .id(readerCommentsPageID())
                     .onAppear {
-                        guard !isRestoringPagedScrollPosition else { return }
+                        guard pagedViewport.matches(size), !isRestoringPagedScrollPosition else { return }
                         if pagedPageIndex != images.count {
                             pagedPageIndex = images.count
                         }
@@ -1384,6 +1399,7 @@ struct ComicReaderPage: View {
                     oldValue: oldValue,
                     newValue: newValue,
                     pageExtent: size.height,
+                    viewportSize: size,
                     images: images,
                     targetPixelWidth: targetPixelWidth
                 )
@@ -1486,10 +1502,14 @@ struct ComicReaderPage: View {
         oldValue: CGFloat,
         newValue: CGFloat,
         pageExtent: CGFloat,
+        viewportSize: CGSize,
         images: [ComicChapterImage],
         targetPixelWidth: Int?
     ) {
-        guard pageExtent.isFinite, pageExtent > 0, !images.isEmpty, !isRestoringPagedScrollPosition else { return }
+        guard pagedViewport.matches(viewportSize),
+              pageExtent.isFinite, pageExtent > 0,
+              oldValue.isFinite, newValue.isFinite,
+              !images.isEmpty, !isRestoringPagedScrollPosition else { return }
         let rawPage = max(newValue / pageExtent, 0)
         let incomingPage: Int
         if newValue < oldValue {
@@ -1521,7 +1541,12 @@ struct ComicReaderPage: View {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
             guard pagedScrollRestoreToken == token else { return }
-            scrollToPage(pageIndex, proxy: proxy, anchor: anchor, animated: false)
+            if case .loaded(let images) = viewModel.state,
+               pagedCommentPageIndex(for: images) == pageIndex {
+                scrollToComments(proxy: proxy, anchor: anchor, animated: false)
+            } else {
+                scrollToPage(pageIndex, proxy: proxy, anchor: anchor, animated: false)
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
                 guard pagedScrollRestoreToken == token else { return }
                 isRestoringPagedScrollPosition = false
@@ -1534,7 +1559,8 @@ struct ComicReaderPage: View {
         targetPixelWidth: Int?,
         selectPage: @escaping (Int) -> Void
     ) {
-        guard isAutoPaging, !isAutoPagingTurnInFlight, !isChapterSheetPresented else { return }
+        guard isAutoPaging, !isAutoPagingTurnInFlight,
+              !isChapterSheetPresented, !isRestoringPagedScrollPosition else { return }
         isAutoPagingTurnInFlight = true
         Task {
             if await handlePagedAutoPagingAtCommentBoundary(images: images, selectPage: selectPage) {

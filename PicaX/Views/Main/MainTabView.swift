@@ -42,6 +42,7 @@ struct MainTabView: View {
                 }
             }
         }
+        .tabViewStyle(.sidebarAdaptable)
     }
     #endif
 

@@ -147,6 +147,18 @@ alt="Get it on GitHub" align="center" height="80" /></a>
 
 项目当前部署目标为 iOS 15.2 / watchOS 9.0 / macOS 26.0 / visionOS 26.0，Live Activity 扩展的部署目标为 iOS 16.1。由于项目包含 iOS 26、macOS 26 和 visionOS 26 API 的条件适配，构建时需要 Xcode 26 或更新版本；生成的 iOS 主应用仍可运行在 iOS 15.2 及更高版本。
 
+### iPhone Duo / iOS 27.2 未签名构建
+
+`iphone-duo-ios27` 分支新增了独立工作流 `.github/workflows/build-iphone-duo.yml`，推送该分支时自动运行，也支持手动触发。它不发布 Release、不调用 Telegram，也不需要配置签名证书。
+
+- 使用 GitHub Actions 的 `xcode-27` runner，默认选择稳定版 Xcode 27.1；手动运行可选 runner 当前提供的 Xcode 27.2 RC。
+- iPhone Duo 的完整屏幕体验需要链接 iOS 27.1 或更新 SDK；不需要把应用最低系统版本提高到 iOS 27.2。默认构建可以在 iOS 27.2 上运行。
+- 在 iPhone Duo / iOS 27.1 模拟器运行单元测试，再生成不含 Watch App 的 `PicaX-iPhoneDuo-unsigned.ipa`。模拟器测试不等于 iOS 27.2 真机验证，也不覆盖自动折叠姿态测试。
+- 构建产物名为 `PicaX-iPhoneDuo-unsigned-<运行编号>`，其中包含未签名 IPA、SHA-256 校验值和构建信息；安装前需自行签名。
+- 分页阅读器在有效窗口尺寸变化时恢复当前页，忽略旧窗口的页码回调；宽屏标签导航采用系统自适应侧边栏。不按设备型号或固定屏幕分辨率判断布局。
+
+参考：[苹果 iPhone Duo 适配指南](https://developer.apple.com/videos/play/tech-talks/111461/)；[Actions Xcode 27 runner 环境](https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md)。
+
 ### Telegram CI 发布
 
 每次 CI 成功生成产物后，GitHub Actions 会将上一次成功编译到本次编译之间的 Commit 汇总作为 Caption，并通过 Telegram Bot 将以下 4 个未签名产物合并为同一个媒体组消息发送到频道：
