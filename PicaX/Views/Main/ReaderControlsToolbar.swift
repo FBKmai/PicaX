@@ -15,6 +15,9 @@ struct ReaderControlsToolbar: ViewModifier {
     let onLoadPreviousChapter: () -> Void
     let onLoadNextChapter: () -> Void
     let onMoveNextBook: () -> Void
+    let canCompareImages: Bool
+    let onShowImageEnhancement: () -> Void
+    let onShowImageComparison: () -> Void
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -58,6 +61,15 @@ struct ReaderControlsToolbar: ViewModifier {
                         Label("阅读列表", systemImage: "list.bullet.rectangle")
                     }
                 }
+
+                Button(action: onShowImageEnhancement) {
+                    Label("画质增强", systemImage: "wand.and.stars")
+                }
+
+                Button(action: onShowImageComparison) {
+                    Label("对比原图", systemImage: "rectangle.split.2x1")
+                }
+                .disabled(!canCompareImages)
             }
         }
     }

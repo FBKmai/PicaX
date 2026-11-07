@@ -13,12 +13,14 @@ final class ImageEnhancementServiceTests: XCTestCase {
 
         defaults.set(ImageEnhancementMode.upscaleSharpen.rawValue, forKey: ReaderSettingsKey.imageEnhancementMode)
         defaults.set(140.0, forKey: ReaderSettingsKey.imageEnhancementStrength)
+        defaults.set(1.5, forKey: ReaderSettingsKey.imageEnhancementScale)
 
         let enhancement = ImageEnhancementService.current(defaults: defaults)
         XCTAssertEqual(enhancement.mode, .upscaleSharpen)
         XCTAssertEqual(enhancement.strength, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(enhancement.scale, 1.5, accuracy: 0.0001)
         XCTAssertTrue(enhancement.isEnabled)
-        XCTAssertEqual(enhancement.cacheKeyFragment, "upscaleSharpen-100")
+        XCTAssertEqual(enhancement.cacheKeyFragment, "upscaleSharpen-100-150")
     }
 
     func testCurrentFallsBackToOffForUnknownMode() {
@@ -31,10 +33,12 @@ final class ImageEnhancementServiceTests: XCTestCase {
 
         defaults.set("unknown-mode", forKey: ReaderSettingsKey.imageEnhancementMode)
         defaults.set(-20.0, forKey: ReaderSettingsKey.imageEnhancementStrength)
+        defaults.set(9.0, forKey: ReaderSettingsKey.imageEnhancementScale)
 
         let enhancement = ImageEnhancementService.current(defaults: defaults)
         XCTAssertEqual(enhancement.mode, .off)
         XCTAssertEqual(enhancement.strength, 0, accuracy: 0.0001)
+        XCTAssertEqual(enhancement.scale, ReaderImageEnhancement.maxScale, accuracy: 0.0001)
         XCTAssertFalse(enhancement.isEnabled)
     }
 
@@ -48,7 +52,7 @@ final class ImageEnhancementServiceTests: XCTestCase {
         XCTAssertNil(enhanced)
     }
 
-    func testUpscaleHonorsTargetWidthAndCap() {
+    func testUpscaleHonorsTargetWidth() {
         let image = makeImage(width: 50, height: 70)
         let enhancement = ReaderImageEnhancement(mode: .upscaleSharpen, strength: 0)
 
@@ -62,6 +66,27 @@ final class ImageEnhancementServiceTests: XCTestCase {
         }
         XCTAssertEqual(doubled.width, 100)
         XCTAssertEqual(doubled.height, 140)
+    }
+
+    func testScaleMultipliesTargetWidth() {
+        let image = makeImage(width: 50, height: 70)
+        let enhancement = ReaderImageEnhancement(mode: .upscaleSharpen, strength: 0, scale: 2)
+
+        guard let upscaled = ImageEnhancementService.enhancedImage(
+            cgImage: image,
+            targetPixelWidth: 60,
+            enhancement: enhancement
+        ) else {
+            XCTFail("expected an upscaled image")
+            return
+        }
+        XCTAssertEqual(upscaled.width, 120)
+        XCTAssertEqual(upscaled.height, 168)
+    }
+
+    func testUpscaleIsCappedAtThreeTimesTheSource() {
+        let image = makeImage(width: 50, height: 70)
+        let enhancement = ReaderImageEnhancement(mode: .upscaleSharpen, strength: 0, scale: 2)
 
         guard let capped = ImageEnhancementService.enhancedImage(
             cgImage: image,
@@ -71,8 +96,8 @@ final class ImageEnhancementServiceTests: XCTestCase {
             XCTFail("expected a capped upscaled image")
             return
         }
-        XCTAssertEqual(capped.width, 100)
-        XCTAssertEqual(capped.height, 140)
+        XCTAssertEqual(capped.width, 150)
+        XCTAssertEqual(capped.height, 210)
     }
 
     func testUpscaleSkipsSourcesWiderThanTheScreen() {
@@ -101,6 +126,22 @@ final class ImageEnhancementServiceTests: XCTestCase {
         }
         XCTAssertEqual(sharpened.width, 60)
         XCTAssertEqual(sharpened.height, 90)
+    }
+
+    func testStrongModeSharpensWithoutUpscaling() {
+        let image = makeImage(width: 60, height: 90)
+        let enhancement = ReaderImageEnhancement(mode: .strong, strength: 0.5)
+
+        guard let enhanced = ImageEnhancementService.enhancedImage(
+            cgImage: image,
+            targetPixelWidth: nil,
+            enhancement: enhancement
+        ) else {
+            XCTFail("expected an enhanced image")
+            return
+        }
+        XCTAssertEqual(enhanced.width, 60)
+        XCTAssertEqual(enhanced.height, 90)
     }
 
     private func makeImage(width: Int, height: Int) -> CGImage {

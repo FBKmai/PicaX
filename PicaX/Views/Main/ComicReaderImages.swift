@@ -27,6 +27,7 @@ struct ReaderImageView: View {
     var onAspectRatioResolved: ((Double) -> Void)? = nil
     @AppStorage(ReaderSettingsKey.imageEnhancementMode) private var enhancementMode = ImageEnhancementMode.off.rawValue
     @AppStorage(ReaderSettingsKey.imageEnhancementStrength) private var enhancementStrength = 0.0
+    @AppStorage(ReaderSettingsKey.imageEnhancementScale) private var enhancementScale = 1.0
     @State private var retryID = 0
     @State private var loadState: ReaderImageLoadState = .loading
     @State private var representedURLString: String?
@@ -104,7 +105,7 @@ struct ReaderImageView: View {
     }
 
     private var enhancementKey: String {
-        "\(enhancementMode)-\(Int(enhancementStrength))"
+        "\(enhancementMode)-\(Int(enhancementStrength))-\(Int((enhancementScale * 100).rounded()))"
     }
 
     @MainActor
@@ -583,8 +584,8 @@ struct ReaderProgressJumpRequest: Equatable {
 enum ReaderImageMemoryCache {
     nonisolated(unsafe) private static let cache: NSCache<NSString, PicaXPlatformImage> = {
         let cache = NSCache<NSString, PicaXPlatformImage>()
-        cache.countLimit = 18
-        cache.totalCostLimit = 112 * 1024 * 1024
+        cache.countLimit = 20
+        cache.totalCostLimit = 192 * 1024 * 1024
         return cache
     }()
 
@@ -629,12 +630,13 @@ enum ReaderImageDecoder {
     nonisolated static func image(
         url: URL,
         targetPixelWidth: Int?,
+        enhancement: ReaderImageEnhancement? = nil,
         decodePriority: TaskPriority = .userInitiated,
         onAspectRatioResolved: (@MainActor (Double) -> Void)? = nil
     ) async throws -> ReaderDecodedImage {
-        let enhancement = ImageEnhancementService.current()
+        let resolvedEnhancement = enhancement ?? ImageEnhancementService.current()
         let usesMemoryCache = url.picaxLocalFileURL == nil
-        let cacheKey = cacheKey(url: url, targetPixelWidth: targetPixelWidth, enhancement: enhancement)
+        let cacheKey = cacheKey(url: url, targetPixelWidth: targetPixelWidth, enhancement: resolvedEnhancement)
         if usesMemoryCache, let cached = ReaderImageMemoryCache.image(for: cacheKey) {
             return cached
         }
@@ -647,7 +649,7 @@ enum ReaderImageDecoder {
         let decoded: ReaderDecodedImage
         var shouldRepairDiskCache = false
         do {
-            decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth, enhancement: enhancement, priority: decodePriority)
+            decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth, enhancement: resolvedEnhancement, priority: decodePriority)
         } catch where error.isTaskCancellation {
             throw error
         } catch {
@@ -657,7 +659,7 @@ enum ReaderImageDecoder {
             if let aspectRatio = encodedAspectRatio(data: data) {
                 await onAspectRatioResolved?(aspectRatio)
             }
-            decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth, enhancement: enhancement, priority: decodePriority)
+            decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth, enhancement: resolvedEnhancement, priority: decodePriority)
             shouldRepairDiskCache = true
         }
         if shouldRepairDiskCache {

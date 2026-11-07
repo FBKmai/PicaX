@@ -69,6 +69,7 @@ struct ComicReaderPage: View {
     @AppStorage(ReaderSettingsKey.usesSystemStatusGlassBackground) private var usesSystemStatusGlassBackground = false
     @AppStorage(ReaderSettingsKey.showsReadingListBookToast) private var showsReadingListBookToast = true
     @AppStorage(ReaderSettingsKey.readingListAutoAdvancesAtBoundary) private var readingListAutoAdvancesAtBoundary = true
+    @AppStorage(ReaderSettingsKey.imageEnhancementMode) private var imageEnhancementMode = ImageEnhancementMode.off.rawValue
 
     private var detail: ComicDetailInfo { viewModel.detail }
     let initialChapterIndex: Int
@@ -110,6 +111,8 @@ struct ComicReaderPage: View {
     @State private var progressJumpRequest: ReaderProgressJumpRequest?
     @State private var detailRequest: ComicListDetailRequest?
     @State private var showsBurnAfterReadingConfirmation = false
+    @State private var showsImageEnhancementPanel = false
+    @State private var imageCompareRequest: ReaderImageCompareRequest?
     @State private var readingDurationSessionStart: Date?
     @State private var didShowInitialToast = false
     @Namespace private var navigationTransitionNamespace
@@ -220,6 +223,9 @@ struct ComicReaderPage: View {
                 }
                 .picaxPresentationDetents([.height(280), .medium])
             }
+            .readerImageComparePresentation(request: $imageCompareRequest) { width in
+                readerTargetPixelWidth(for: width)
+            }
             .alert("开启“阅后即焚”？", isPresented: $showsBurnAfterReadingConfirmation) {
                 Button("开启", role: .destructive) {
                     deletesLocalDownloadOnExit?.wrappedValue = true
@@ -279,7 +285,14 @@ struct ComicReaderPage: View {
                 onMovePreviousBook: moveToPreviousBook,
                 onLoadPreviousChapter: requestPreviousChapter,
                 onLoadNextChapter: requestNextChapter,
-                onMoveNextBook: moveToNextBook
+                onMoveNextBook: moveToNextBook,
+                canCompareImages: canCompareCurrentImage,
+                onShowImageEnhancement: {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        showsImageEnhancementPanel.toggle()
+                    }
+                },
+                onShowImageComparison: presentImageComparison
             ))
     }
 
@@ -307,6 +320,30 @@ struct ComicReaderPage: View {
                 onChapterEndAction: performChapterEndAction
             )
         }
+        .overlay(alignment: .bottom) {
+            if showsImageEnhancementPanel && showsReaderUI {
+                GeometryReader { geometry in
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        ReaderImageEnhancementPanel(
+                            targetPixelWidth: readerTargetPixelWidth(for: geometry.size.width),
+                            canCompare: canCompareCurrentImage,
+                            onCompare: presentImageComparison,
+                            onClose: {
+                                withAnimation(.easeInOut(duration: 0.18)) {
+                                    showsImageEnhancementPanel = false
+                                }
+                            }
+                        )
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 96)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: showsImageEnhancementPanel)
         .animation(.easeInOut(duration: 0.18), value: showsSystemStatus)
         .animation(readerChromeAnimation, value: showsReaderUI)
         .animation(.easeInOut(duration: 0.16), value: readerToastMessage)
@@ -2114,6 +2151,46 @@ struct ComicReaderPage: View {
     private func readerTargetPixelWidth(for width: CGFloat) -> Int? {
         guard width.isFinite, width > 0, displayScale > 0 else { return nil }
         return max(Int((width * displayScale).rounded(.up)), 1)
+    }
+
+    private var loadedReaderImages: [ComicChapterImage]? {
+        if case .loaded(let images) = viewModel.state {
+            return images
+        }
+        return nil
+    }
+
+    private var canCompareCurrentImage: Bool {
+        guard ImageEnhancementMode(rawValue: imageEnhancementMode)?.isEnabled == true,
+              !usesWholeBookContinuousReading,
+              let images = loadedReaderImages,
+              !images.isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    private func presentImageComparison() {
+        guard ImageEnhancementMode(rawValue: imageEnhancementMode)?.isEnabled == true else {
+            showReaderToast("请先在画质增强中开启增强")
+            return
+        }
+        guard !usesWholeBookContinuousReading else {
+            showReaderToast("整卷连续阅读暂不支持前后对比")
+            return
+        }
+        guard let images = loadedReaderImages, !images.isEmpty else {
+            showReaderToast("图片尚未加载完成")
+            return
+        }
+
+        let candidateIndex = readerReadingMode == .topToBottomContinuous ? viewModel.currentPageIndex : pagedPageIndex
+        let index = min(max(candidateIndex, 0), images.count - 1)
+        guard images.indices.contains(index) else { return }
+        imageCompareRequest = ReaderImageCompareRequest(
+            urlString: images[index].urlString,
+            enhancement: ImageEnhancementService.current()
+        )
     }
 
     private func scheduleReadingHistoryRecord(pageIndex: Int, totalPages: Int) {

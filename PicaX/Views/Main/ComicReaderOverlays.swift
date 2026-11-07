@@ -63,6 +63,7 @@ nonisolated enum ReaderSettingsKey {
     static let visibilityDefaultsVersion = "settings.reader.visibilityDefaultsVersion"
     static let imageEnhancementMode = "settings.reader.imageEnhancementMode"
     static let imageEnhancementStrength = "settings.reader.imageEnhancementStrength"
+    static let imageEnhancementScale = "settings.reader.imageEnhancementScale"
 }
 
 enum ReaderProgressStyle: String, CaseIterable, Identifiable {

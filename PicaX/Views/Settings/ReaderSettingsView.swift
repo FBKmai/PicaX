@@ -58,6 +58,7 @@ struct ReaderSettingsView: View {
     @AppStorage(ReaderSettingsKey.autoBurnAfterReadingList) private var autoBurnAfterReadingList = false
     @AppStorage(ReaderSettingsKey.imageEnhancementMode) private var imageEnhancementMode = ImageEnhancementMode.off.rawValue
     @AppStorage(ReaderSettingsKey.imageEnhancementStrength) private var imageEnhancementStrength = 0.0
+    @AppStorage(ReaderSettingsKey.imageEnhancementScale) private var imageEnhancementScale = 1.0
 
     var body: some View {
         List {
@@ -115,24 +116,33 @@ struct ReaderSettingsView: View {
                 }
                 .onChange(of: imageEnhancementMode) { newValue in
                     // 首次开启增强时给一个默认强度，避免锐化因强度为 0 而看似无效。
-                    guard ImageEnhancementMode(rawValue: newValue) != nil,
-                          newValue != ImageEnhancementMode.off.rawValue,
+                    guard newValue != ImageEnhancementMode.off.rawValue,
                           imageEnhancementStrength <= 0 else {
                         return
                     }
-                    imageEnhancementStrength = 50
+                    imageEnhancementStrength = 60
                 }
 
                 if selectedEnhancementMode != .off {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("强度 \(Int(imageEnhancementStrength))")
+                        Text("强度 \(Int(imageEnhancementStrength))%")
                         Slider(value: $imageEnhancementStrength, in: 0...100, step: 5)
+                    }
+
+                    if selectedEnhancementMode.usesUpscale {
+                        Picker("目标分辨率", selection: $imageEnhancementScale) {
+                            ForEach(ReaderImageEnhancement.scalePresets, id: \.self) { preset in
+                                Text(ReaderImageEnhancement.scaleLabel(for: preset))
+                                    .tag(preset)
+                            }
+                        }
+                        .pickerStyle(.segmented)
                     }
                 }
             } header: {
                 Text("画质增强")
             } footer: {
-                Text("对分辨率低于屏幕的漫画图做本地放大与锐化，可缓解在大屏（如 iPhone Duo）上展开后发糊。仅在阅读器内生效，默认关闭，切换后重新加载当前页生效。")
+                Text("对分辨率低于屏幕的漫画图做本地 Lanczos 放大与多级锐化，可缓解在大屏（如 iPhone Duo）上展开后发糊。目标分辨率为屏幕物理像素宽 × 倍率，且不超过源图的 3 倍；阅读器内可直接调节强度并对比原图。")
             }
 
             Section {
