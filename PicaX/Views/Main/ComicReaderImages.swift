@@ -640,6 +640,11 @@ enum ReaderImageDecoder {
         if usesMemoryCache, let cached = ReaderImageMemoryCache.image(for: cacheKey) {
             return cached
         }
+        // 增强开启时直接按最终输出尺寸解码，避免先降到屏幕宽度再放大导致细节二次损失。
+        let decodePixelWidth = ImageEnhancementService.outputPixelWidth(
+            screenPixelWidth: targetPixelWidth,
+            enhancement: resolvedEnhancement
+        )
 
         var data = try await ImageCacheService.data(for: url)
         guard !Task.isCancelled else { throw CancellationError() }
@@ -649,7 +654,7 @@ enum ReaderImageDecoder {
         let decoded: ReaderDecodedImage
         var shouldRepairDiskCache = false
         do {
-            decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth, enhancement: resolvedEnhancement, priority: decodePriority)
+            decoded = try await decode(data: data, url: url, targetPixelWidth: decodePixelWidth, enhancement: resolvedEnhancement, priority: decodePriority)
         } catch where error.isTaskCancellation {
             throw error
         } catch {
@@ -659,7 +664,7 @@ enum ReaderImageDecoder {
             if let aspectRatio = encodedAspectRatio(data: data) {
                 await onAspectRatioResolved?(aspectRatio)
             }
-            decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth, enhancement: resolvedEnhancement, priority: decodePriority)
+            decoded = try await decode(data: data, url: url, targetPixelWidth: decodePixelWidth, enhancement: resolvedEnhancement, priority: decodePriority)
             shouldRepairDiskCache = true
         }
         if shouldRepairDiskCache {
@@ -706,7 +711,7 @@ enum ReaderImageDecoder {
             guard let decodedImage else {
                 throw URLError(.cannotDecodeContentData)
             }
-            let image = applyEnhancement(decodedImage, targetPixelWidth: targetPixelWidth, enhancement: enhancement)
+            let image = applyEnhancement(decodedImage, outputPixelWidth: targetPixelWidth, enhancement: enhancement)
             return ReaderDecodedImage(image: image)
         }
         return try await withTaskCancellationHandler {
@@ -718,14 +723,14 @@ enum ReaderImageDecoder {
 
     private nonisolated static func applyEnhancement(
         _ image: PicaXPlatformImage,
-        targetPixelWidth: Int?,
+        outputPixelWidth: Int?,
         enhancement: ReaderImageEnhancement
     ) -> PicaXPlatformImage {
         guard enhancement.isEnabled,
               let cgImage = image.picaxCGImage,
               let enhanced = ImageEnhancementService.enhancedImage(
                   cgImage: cgImage,
-                  targetPixelWidth: targetPixelWidth,
+                  outputPixelWidth: outputPixelWidth,
                   enhancement: enhancement
               ) else {
             return image
