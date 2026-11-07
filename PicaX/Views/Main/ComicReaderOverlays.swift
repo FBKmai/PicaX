@@ -61,6 +61,8 @@ nonisolated enum ReaderSettingsKey {
     static let autoBurnAfterReadingSingle = "settings.reader.autoBurnAfterReadingSingle"
     static let autoBurnAfterReadingList = "settings.reader.autoBurnAfterReadingList"
     static let visibilityDefaultsVersion = "settings.reader.visibilityDefaultsVersion"
+    static let imageEnhancementMode = "settings.reader.imageEnhancementMode"
+    static let imageEnhancementStrength = "settings.reader.imageEnhancementStrength"
 }
 
 enum ReaderProgressStyle: String, CaseIterable, Identifiable {

@@ -11,6 +11,7 @@ import AppKit
 private struct ReaderImageRequest: Equatable {
     let urlString: String
     let targetPixelWidth: Int?
+    let enhancementKey: String
 }
 
 struct ReaderImageView: View {
@@ -24,6 +25,8 @@ struct ReaderImageView: View {
     let zoomConfiguration: ReaderZoomConfiguration
     let dimsImage: Bool
     var onAspectRatioResolved: ((Double) -> Void)? = nil
+    @AppStorage(ReaderSettingsKey.imageEnhancementMode) private var enhancementMode = ImageEnhancementMode.off.rawValue
+    @AppStorage(ReaderSettingsKey.imageEnhancementStrength) private var enhancementStrength = 0.0
     @State private var retryID = 0
     @State private var loadState: ReaderImageLoadState = .loading
     @State private var representedURLString: String?
@@ -59,7 +62,7 @@ struct ReaderImageView: View {
             transaction.animation = nil
             transaction.disablesAnimations = true
         }
-        .task(id: "\(image.urlString)-\(targetPixelWidth ?? 0)-\(retryID)-\(isLoadAllowed)") {
+        .task(id: "\(image.urlString)-\(targetPixelWidth ?? 0)-\(retryID)-\(isLoadAllowed)-\(enhancementKey)") {
             if representedURLString != image.urlString {
                 resetLocalImageState()
                 representedURLString = image.urlString
@@ -100,9 +103,17 @@ struct ReaderImageView: View {
         receiveAspectRatio(cachedAspectRatio, storesInCache: false)
     }
 
+    private var enhancementKey: String {
+        "\(enhancementMode)-\(Int(enhancementStrength))"
+    }
+
     @MainActor
     private func loadImage() async {
-        let request = ReaderImageRequest(urlString: image.urlString, targetPixelWidth: targetPixelWidth)
+        let request = ReaderImageRequest(
+            urlString: image.urlString,
+            targetPixelWidth: targetPixelWidth,
+            enhancementKey: enhancementKey
+        )
         guard loadedRequest != request else { return }
         guard let url = image.url else {
             loadState = .failed
@@ -621,8 +632,9 @@ enum ReaderImageDecoder {
         decodePriority: TaskPriority = .userInitiated,
         onAspectRatioResolved: (@MainActor (Double) -> Void)? = nil
     ) async throws -> ReaderDecodedImage {
+        let enhancement = ImageEnhancementService.current()
         let usesMemoryCache = url.picaxLocalFileURL == nil
-        let cacheKey = cacheKey(url: url, targetPixelWidth: targetPixelWidth)
+        let cacheKey = cacheKey(url: url, targetPixelWidth: targetPixelWidth, enhancement: enhancement)
         if usesMemoryCache, let cached = ReaderImageMemoryCache.image(for: cacheKey) {
             return cached
         }
@@ -635,7 +647,7 @@ enum ReaderImageDecoder {
         let decoded: ReaderDecodedImage
         var shouldRepairDiskCache = false
         do {
-            decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth, priority: decodePriority)
+            decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth, enhancement: enhancement, priority: decodePriority)
         } catch where error.isTaskCancellation {
             throw error
         } catch {
@@ -645,7 +657,7 @@ enum ReaderImageDecoder {
             if let aspectRatio = encodedAspectRatio(data: data) {
                 await onAspectRatioResolved?(aspectRatio)
             }
-            decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth, priority: decodePriority)
+            decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth, enhancement: enhancement, priority: decodePriority)
             shouldRepairDiskCache = true
         }
         if shouldRepairDiskCache {
@@ -658,11 +670,12 @@ enum ReaderImageDecoder {
     }
 
     nonisolated static func preload(urlStrings: [String], targetPixelWidth: Int?) async {
+        let enhancement = ImageEnhancementService.current()
         for urlString in urlStrings {
             guard !Task.isCancelled,
                   let url = URL.picaxResolved(from: urlString),
                   url.picaxLocalFileURL == nil,
-                  ReaderImageMemoryCache.image(for: cacheKey(url: url, targetPixelWidth: targetPixelWidth)) == nil else {
+                  ReaderImageMemoryCache.image(for: cacheKey(url: url, targetPixelWidth: targetPixelWidth, enhancement: enhancement)) == nil else {
                 continue
             }
 
@@ -676,21 +689,22 @@ enum ReaderImageDecoder {
         }
     }
 
-    private nonisolated static func decode(data: Data, url: URL, targetPixelWidth: Int?, priority: TaskPriority) async throws -> ReaderDecodedImage {
+    private nonisolated static func decode(data: Data, url: URL, targetPixelWidth: Int?, enhancement: ReaderImageEnhancement, priority: TaskPriority) async throws -> ReaderDecodedImage {
         let task = Task.detached(priority: priority) {
             if Task.isCancelled {
                 throw CancellationError()
             }
 
-            let image = JmImageScrambler.decodedImage(
+            let decodedImage = JmImageScrambler.decodedImage(
                 data: data,
                 url: url,
                 targetPixelWidth: targetPixelWidth
             ) ?? downsampledImage(data: data, targetPixelWidth: targetPixelWidth) ?? PicaXPlatformImage.picaxImage(data: data)
 
-            guard let image else {
+            guard let decodedImage else {
                 throw URLError(.cannotDecodeContentData)
             }
+            let image = applyEnhancement(decodedImage, targetPixelWidth: targetPixelWidth, enhancement: enhancement)
             return ReaderDecodedImage(image: image)
         }
         return try await withTaskCancellationHandler {
@@ -698,6 +712,23 @@ enum ReaderImageDecoder {
         } onCancel: {
             task.cancel()
         }
+    }
+
+    private nonisolated static func applyEnhancement(
+        _ image: PicaXPlatformImage,
+        targetPixelWidth: Int?,
+        enhancement: ReaderImageEnhancement
+    ) -> PicaXPlatformImage {
+        guard enhancement.isEnabled,
+              let cgImage = image.picaxCGImage,
+              let enhanced = ImageEnhancementService.enhancedImage(
+                  cgImage: cgImage,
+                  targetPixelWidth: targetPixelWidth,
+                  enhancement: enhancement
+              ) else {
+            return image
+        }
+        return PicaXPlatformImage.picaxImage(cgImage: enhanced)
     }
 
     nonisolated static func downsampledImage(data: Data, targetPixelWidth: Int?) -> PicaXPlatformImage? {
@@ -747,8 +778,8 @@ enum ReaderImageDecoder {
         return aspectRatio.isFinite && aspectRatio > 0 ? aspectRatio : nil
     }
 
-    private nonisolated static func cacheKey(url: URL, targetPixelWidth: Int?) -> String {
-        "\(url.absoluteString)#\(targetPixelWidth ?? 0)"
+    private nonisolated static func cacheKey(url: URL, targetPixelWidth: Int?, enhancement: ReaderImageEnhancement) -> String {
+        "\(url.absoluteString)#\(targetPixelWidth ?? 0)#\(enhancement.cacheKeyFragment)"
     }
 }
 
